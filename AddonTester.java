@@ -18,7 +18,14 @@ public class AddonTester implements Callable<Integer> {
     // ANSI color codes
     private static final String RED = "\u001B[31m";
     private static final String GREEN = "\u001B[32m";
+    private static final String YELLOW = "\u001B[33m";
+    private static final String CYAN = "\u001B[36m";
+    private static final String DIM = "\u001B[2m";
     private static final String RESET = "\u001B[0m";
+    private static final String CLEAR_LINE = "\u001B[2K";
+    private static final String MOVE_UP = "\u001B[1A";
+
+    private static final int TAIL_LINES = 10;
 
     @Option(names = {"--vaadin.version", "-v"}, description = "Vaadin version to test against", defaultValue = "25.0.5")
     private String vaadinVersion;
@@ -34,31 +41,47 @@ public class AddonTester implements Callable<Integer> {
             String name,
             String repoUrl,
             String branch,
+            String buildSubdir,
+            String javaVersion,  // SDKMAN Java version identifier (e.g., "21.0.5-tem")
             List<String> extraMvnArgs,
             boolean ignored,
             String ignoreReason
     ) {
         AddonConfig(String name, String repoUrl) {
-            this(name, repoUrl, null, List.of(), false, null);
+            this(name, repoUrl, null, null, null, List.of(), false, null);
+        }
+
+        AddonConfig(String name, String repoUrl, String buildSubdir) {
+            this(name, repoUrl, null, buildSubdir, null, List.of(), false, null);
+        }
+
+        AddonConfig(String name, String repoUrl, String buildSubdir, String javaVersion) {
+            this(name, repoUrl, null, buildSubdir, javaVersion, List.of(), false, null);
         }
     }
 
     // Test result
-    record TestResult(String addonName, boolean success, String message, long durationMs) {}
+    record TestResult(String addonName, boolean success, String message, long durationMs, Path logFile) {
+        TestResult(String addonName, boolean success, String message, long durationMs) {
+            this(addonName, success, message, durationMs, null);
+        }
+    }
+
+    // Build status for display
+    enum BuildStatus { PENDING, BUILDING, PASSED, FAILED, IGNORED }
 
     // Configure add-ons to test here
     private static final List<AddonConfig> ADDONS = List.of(
-            new AddonConfig("hugerte-for-flow", "https://github.com/parttio/hugerte-for-flow")
+            new AddonConfig("hugerte-for-flow", "https://github.com/parttio/hugerte-for-flow"),
+            new AddonConfig("super-fields", "https://github.com/vaadin-miki/super-fields", "superfields", "21-tem")
     );
+
+    private final Map<String, BuildStatus> statusMap = new LinkedHashMap<>();
+    private final Map<String, Long> durationMap = new HashMap<>();
+    private int lastOutputLines = 0;
 
     @Override
     public Integer call() throws Exception {
-        System.out.println("=".repeat(60));
-        System.out.println("Vaadin Add-on Compatibility Tester");
-        System.out.println("=".repeat(60));
-        System.out.println("Testing against Vaadin version: " + vaadinVersion);
-        System.out.println();
-
         Path workPath = Path.of(workDir);
 
         if (clean && Files.exists(workPath)) {
@@ -68,93 +91,256 @@ public class AddonTester implements Callable<Integer> {
 
         Files.createDirectories(workPath);
 
+        // Initialize status map
+        for (AddonConfig addon : ADDONS) {
+            statusMap.put(addon.name(), addon.ignored() ? BuildStatus.IGNORED : BuildStatus.PENDING);
+        }
+
         List<TestResult> results = new ArrayList<>();
+
+        // Print initial header
+        printHeader();
+        printStatusTable();
+        System.out.println();
 
         for (AddonConfig addon : ADDONS) {
             if (addon.ignored()) {
-                System.out.println("\n" + "-".repeat(60));
-                System.out.println("SKIPPING: " + addon.name() + " (ignored)");
-                System.out.println("Reason: " + addon.ignoreReason());
                 results.add(new TestResult(addon.name(), false, "Ignored: " + addon.ignoreReason(), 0));
                 continue;
             }
 
-            System.out.println("\n" + "-".repeat(60));
-            System.out.println("Testing: " + addon.name());
-            System.out.println("-".repeat(60));
+            statusMap.put(addon.name(), BuildStatus.BUILDING);
+            clearOutput();
+            printHeader();
+            printStatusTable();
+            System.out.println();
 
             long startTime = System.currentTimeMillis();
             TestResult result = testAddon(addon, workPath);
             results.add(result);
+
+            durationMap.put(addon.name(), result.durationMs());
+            statusMap.put(addon.name(), result.success() ? BuildStatus.PASSED : BuildStatus.FAILED);
+
+            clearOutput();
+            printHeader();
+            printStatusTable();
+
+            // Show result for this addon
+            if (!result.success()) {
+                System.out.println();
+                System.out.printf("  %s%s failed. Log: %s%s%n", RED, addon.name(), result.logFile(), RESET);
+            }
+            System.out.println();
         }
 
-        // Print summary
-        printSummary(results);
+        // Print final summary
+        printFinalSummary(results);
 
-        // Return non-zero if any test failed
-        boolean allPassed = results.stream().allMatch(TestResult::success);
+        boolean allPassed = results.stream()
+                .filter(r -> !r.message().startsWith("Ignored:"))
+                .allMatch(TestResult::success);
         return allPassed ? 0 : 1;
+    }
+
+    private void printHeader() {
+        System.out.println("=".repeat(60));
+        System.out.println("Vaadin Add-on Compatibility Tester");
+        System.out.println("Testing against Vaadin version: " + CYAN + vaadinVersion + RESET);
+        System.out.println("=".repeat(60));
+    }
+
+    private void printStatusTable() {
+        for (var entry : statusMap.entrySet()) {
+            String name = entry.getKey();
+            BuildStatus status = entry.getValue();
+            Long duration = durationMap.get(name);
+            String durationStr = duration != null ? String.format(" (%.1fs)", duration / 1000.0) : "";
+
+            String statusStr = switch (status) {
+                case PENDING -> DIM + "PENDING" + RESET;
+                case BUILDING -> YELLOW + "BUILDING..." + RESET;
+                case PASSED -> GREEN + "PASSED" + RESET + durationStr;
+                case FAILED -> RED + "FAILED" + RESET + durationStr;
+                case IGNORED -> DIM + "IGNORED" + RESET;
+            };
+
+            System.out.printf("  %-30s %s%n", name, statusStr);
+        }
+    }
+
+    private void clearOutput() {
+        // Clear previous output lines
+        for (int i = 0; i < lastOutputLines; i++) {
+            System.out.print(MOVE_UP + CLEAR_LINE);
+        }
+        lastOutputLines = 0;
+    }
+
+    private void clearTailLines(int lines) {
+        for (int i = 0; i < lines; i++) {
+            System.out.print(MOVE_UP + CLEAR_LINE);
+        }
+    }
+
+    private int countOutputLines() {
+        // Header (4 lines) + status table + 1 empty line
+        return 5 + statusMap.size();
     }
 
     private TestResult testAddon(AddonConfig addon, Path workPath) {
         long startTime = System.currentTimeMillis();
         Path addonPath = workPath.resolve(addon.name());
+        Path logFile = workPath.resolve(addon.name() + "-build.log");
 
         try {
-            // Clone or update repository
+            // Clone or update repository (silent)
             if (!Files.exists(addonPath)) {
-                System.out.println("Cloning " + addon.repoUrl() + "...");
-                int cloneResult = runCommand(workPath, "git", "clone", addon.repoUrl(), addon.name());
+                int cloneResult = runCommandSilent(workPath, logFile, "git", "clone", addon.repoUrl(), addon.name());
                 if (cloneResult != 0) {
-                    return new TestResult(addon.name(), false, "Failed to clone repository", elapsed(startTime));
+                    return new TestResult(addon.name(), false, "Failed to clone repository", elapsed(startTime), logFile);
                 }
             } else {
-                System.out.println("Updating existing repository...");
-                runCommand(addonPath, "git", "fetch", "--all");
-                runCommand(addonPath, "git", "reset", "--hard", "origin/" + (addon.branch() != null ? addon.branch() : "main"));
+                runCommandSilent(addonPath, logFile, "git", "fetch", "--all");
+                // Get the default branch from remote
+                String defaultBranch = addon.branch() != null ? addon.branch() : getDefaultBranch(addonPath, logFile);
+                runCommandSilent(addonPath, logFile, "git", "reset", "--hard", "origin/" + defaultBranch);
             }
 
             // Checkout specific branch if configured
             if (addon.branch() != null) {
-                System.out.println("Checking out branch: " + addon.branch());
-                int checkoutResult = runCommand(addonPath, "git", "checkout", addon.branch());
+                int checkoutResult = runCommandSilent(addonPath, logFile, "git", "checkout", addon.branch());
                 if (checkoutResult != 0) {
-                    // Try with origin/ prefix
-                    checkoutResult = runCommand(addonPath, "git", "checkout", "-b", addon.branch(), "origin/" + addon.branch());
+                    checkoutResult = runCommandSilent(addonPath, logFile, "git", "checkout", "-b", addon.branch(), "origin/" + addon.branch());
                     if (checkoutResult != 0) {
-                        return new TestResult(addon.name(), false, "Failed to checkout branch: " + addon.branch(), elapsed(startTime));
+                        return new TestResult(addon.name(), false, "Failed to checkout branch: " + addon.branch(), elapsed(startTime), logFile);
                     }
                 }
             }
 
             // Build with specified Vaadin version
-            System.out.println("Running mvn clean verify with Vaadin " + vaadinVersion + "...");
-            List<String> mvnCommand = new ArrayList<>();
-            mvnCommand.add("mvn");
-            mvnCommand.add("clean");
-            mvnCommand.add("verify");
-            mvnCommand.add("-Dvaadin.version=" + vaadinVersion);
-            mvnCommand.add("-B"); // Batch mode for cleaner output
-            mvnCommand.addAll(addon.extraMvnArgs());
+            Path buildPath = addon.buildSubdir() != null ? addonPath.resolve(addon.buildSubdir()) : addonPath;
 
-            int buildResult = runCommand(addonPath, mvnCommand.toArray(new String[0]));
+            List<String> mvnArgs = new ArrayList<>();
+            mvnArgs.add("clean");
+            mvnArgs.add("verify");
+            mvnArgs.add("-Dvaadin.version=" + vaadinVersion);
+            mvnArgs.add("-B");
+            mvnArgs.addAll(addon.extraMvnArgs());
+
+            int buildResult = runMavenWithTail(buildPath, logFile, addon.javaVersion(), mvnArgs);
 
             if (buildResult == 0) {
-                return new TestResult(addon.name(), true, "Build successful", elapsed(startTime));
+                return new TestResult(addon.name(), true, "Build successful", elapsed(startTime), logFile);
             } else {
-                return new TestResult(addon.name(), false, "Build failed (exit code: " + buildResult + ")", elapsed(startTime));
+                return new TestResult(addon.name(), false, "Build failed (exit code: " + buildResult + ")", elapsed(startTime), logFile);
             }
 
         } catch (Exception e) {
-            return new TestResult(addon.name(), false, "Error: " + e.getMessage(), elapsed(startTime));
+            return new TestResult(addon.name(), false, "Error: " + e.getMessage(), elapsed(startTime), logFile);
         }
     }
 
-    private int runCommand(Path workDir, String... command) throws IOException, InterruptedException {
+    private String getDefaultBranch(Path repoPath, Path logFile) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("git", "symbolic-ref", "refs/remotes/origin/HEAD", "--short");
+            pb.directory(repoPath.toFile());
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            String result = new String(process.getInputStream().readAllBytes()).trim();
+            process.waitFor();
+
+            // Result is like "origin/main" or "origin/master", extract just the branch name
+            if (result.startsWith("origin/")) {
+                return result.substring(7);
+            }
+        } catch (Exception e) {
+            // Ignore, fall back to default
+        }
+        return "main"; // Default fallback
+    }
+
+    private int runCommandSilent(Path workDir, Path logFile, String... command) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(workDir.toFile());
-        pb.inheritIO();
+        pb.redirectErrorStream(true);
+
         Process process = pb.start();
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+             BufferedWriter writer = Files.newBufferedWriter(logFile, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                writer.write(line);
+                writer.newLine();
+            }
+        }
+
+        return process.waitFor();
+    }
+
+    private int runMavenWithTail(Path workDir, Path logFile, String javaVersion, List<String> mvnArgs) throws IOException, InterruptedException {
+        String mvnCommand = "mvn " + String.join(" ", mvnArgs);
+
+        List<String> command;
+        if (javaVersion != null) {
+            // Use SDKMAN to install (if needed) and set Java version
+            // Set non-interactive mode and auto-answer yes
+            String sdkmanInit = "export SDKMAN_DIR=\"$HOME/.sdkman\" && source \"$SDKMAN_DIR/bin/sdkman-init.sh\"";
+            String sdkInstall = "yes | sdk install java " + javaVersion + " || true";
+            String sdkUse = "sdk use java " + javaVersion;
+            String fullCommand = sdkmanInit + " && " + sdkInstall + " && " + sdkUse + " && " + mvnCommand;
+            command = List.of("bash", "-c", fullCommand);
+        } else {
+            command = new ArrayList<>();
+            command.add("mvn");
+            command.addAll(mvnArgs);
+        }
+
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.directory(workDir.toFile());
+        pb.redirectErrorStream(true);
+        pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+
+        Process process = pb.start();
+
+        LinkedList<String> tailBuffer = new LinkedList<>();
+        int displayedLines = 0;
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+             BufferedWriter writer = Files.newBufferedWriter(logFile, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                // Write to log file
+                writer.write(line);
+                writer.newLine();
+                writer.flush();
+
+                // Update tail buffer
+                tailBuffer.addLast(line);
+                if (tailBuffer.size() > TAIL_LINES) {
+                    tailBuffer.removeFirst();
+                }
+
+                // Clear previous tail display
+                clearTailLines(displayedLines);
+
+                // Print current tail
+                displayedLines = 0;
+                for (String tailLine : tailBuffer) {
+                    String truncated = tailLine.length() > 70 ? tailLine.substring(0, 67) + "..." : tailLine;
+                    System.out.printf("  %s%s%s%n", DIM, truncated, RESET);
+                    displayedLines++;
+                }
+            }
+        }
+
+        // Clear tail after build completes
+        clearTailLines(displayedLines);
+        lastOutputLines = countOutputLines();
+
         return process.waitFor();
     }
 
@@ -171,41 +357,27 @@ public class AddonTester implements Callable<Integer> {
         }
     }
 
-    private void printSummary(List<TestResult> results) {
-        System.out.println("\n" + "=".repeat(60));
-        System.out.println("SUMMARY");
-        System.out.println("=".repeat(60));
-        System.out.println("Vaadin version tested: " + vaadinVersion);
+    private void printFinalSummary(List<TestResult> results) {
+        System.out.println("-".repeat(60));
+        System.out.println("Build logs saved to: " + workDir + "/");
         System.out.println();
 
-        int passed = 0;
-        int failed = 0;
-        int ignored = 0;
-
+        int passed = 0, failed = 0, ignored = 0;
         for (TestResult result : results) {
-            String status;
             if (result.message().startsWith("Ignored:")) {
-                status = "IGNORED";
                 ignored++;
             } else if (result.success()) {
-                status = GREEN + "PASSED" + RESET;
                 passed++;
             } else {
-                status = RED + "FAILED" + RESET;
                 failed++;
-            }
-
-            String duration = result.durationMs() > 0 ? String.format(" (%.1fs)", result.durationMs() / 1000.0) : "";
-            System.out.printf("  %-30s %s%s%n", result.addonName(), status, duration);
-            if (!result.success() && !result.message().startsWith("Ignored:")) {
-                System.out.printf("    -> %s%s%s%n", RED, result.message(), RESET);
             }
         }
 
-        System.out.println();
-        System.out.println("-".repeat(60));
-        System.out.printf("Total: %d | Passed: %d | Failed: %d | Ignored: %d%n",
-                results.size(), passed, failed, ignored);
+        System.out.printf("Total: %d | %sPassed: %d%s | %sFailed: %d%s | Ignored: %d%n",
+                results.size(),
+                GREEN, passed, RESET,
+                failed > 0 ? RED : "", failed, failed > 0 ? RESET : "",
+                ignored);
         System.out.println("=".repeat(60));
     }
 

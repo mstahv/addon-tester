@@ -8,6 +8,7 @@ A JBang script for testing Vaadin add-ons against different Vaadin framework ver
 - [JBang](https://www.jbang.dev/) installed
 - Git
 - Maven
+- [SDKMAN](https://sdkman.io/) (optional, for per-addon Java version switching)
 
 ## Usage
 
@@ -56,9 +57,15 @@ Edit the `ADDONS` list in `AddonTester.java` to configure which add-ons to test:
 
 ```java
 private static final List<AddonConfig> ADDONS = List.of(
+    // Simple: just name and repo URL
     new AddonConfig("addon-name", "https://github.com/org/repo"),
-    new AddonConfig("another-addon", "https://github.com/org/another-repo",
-                    "branch-name", List.of("-DskipTests"), false, null)
+    // With build subdirectory
+    new AddonConfig("multi-module", "https://github.com/org/repo", "submodule"),
+    // With subdirectory and specific Java version (via SDKMAN)
+    new AddonConfig("legacy-addon", "https://github.com/org/repo", "subdir", "17-tem"),
+    // Full configuration
+    new AddonConfig("full-config", "https://github.com/org/repo",
+                    "branch-name", "subdir", "21-tem", List.of("-DskipTests"), false, null)
 );
 ```
 
@@ -67,6 +74,8 @@ private static final List<AddonConfig> ADDONS = List.of(
 - `name` - Directory name for the cloned repository
 - `repoUrl` - Git repository URL
 - `branch` - Branch to checkout (optional, defaults to main)
+- `buildSubdir` - Subdirectory to run Maven in (optional, for multi-module projects)
+- `javaVersion` - SDKMAN Java version identifier (optional, e.g., `"21-tem"` for Temurin 21, auto-installs if missing)
 - `extraMvnArgs` - Additional Maven arguments (optional)
 - `ignored` - Skip this add-on if true
 - `ignoreReason` - Reason for ignoring (shown in output)
@@ -74,6 +83,10 @@ private static final List<AddonConfig> ADDONS = List.of(
 ## How It Works
 
 1. Clones (or updates) each configured add-on repository into the work directory
-2. Runs `mvn verify -Dvaadin.version=<version>` for each add-on
-3. Reports success/failure status with timing information
-4. Returns exit code 0 if all tests pass, 1 otherwise
+2. Auto-detects the default branch (main/master/etc.) from the remote
+3. Installs and switches Java version via SDKMAN if configured (auto-installs if missing)
+4. Runs `mvn clean verify -Dvaadin.version=<version>` for each add-on
+5. Displays a live status table with build progress (last 10 lines of output)
+6. Saves full build logs to `work/<addon-name>-build.log`
+7. Reports success/failure status with colored output and timing information
+8. Returns exit code 0 if all tests pass, 1 otherwise
