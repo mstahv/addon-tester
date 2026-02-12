@@ -87,7 +87,13 @@ public class AddonTester implements Callable<Integer> {
     // Configure add-ons to test here
     private static final List<AddonConfig> ADDONS = List.of(
             new AddonConfig("hugerte-for-flow", "https://github.com/parttio/hugerte-for-flow"),
-            new AddonConfig("super-fields", "https://github.com/vaadin-miki/super-fields", "superfields", "21-tem")
+            new AddonConfig("super-fields", "https://github.com/vaadin-miki/super-fields", "superfields", "21-tem"),
+            new AddonConfig("flow-viritin", "https://github.com/viritin/flow-viritin"),
+            new AddonConfig("grid-pagination", "https://github.com/parttio/grid-pagination"),
+            new AddonConfig("vaadin-fullcalendar", "https://github.com/stefanuebe/vaadin-fullcalendar"),
+            new AddonConfig("vaadin-maps-leaflet-flow", "https://github.com/xdev-software/vaadin-maps-leaflet-flow"),
+            new AddonConfig("vaadin-ckeditor", "https://github.com/wontlost-ltd/vaadin-ckeditor"),
+            new AddonConfig("svg-visualizations", "https://github.com/viritin/svg-visualizations")
     );
 
     private final Map<String, BuildStatus> statusMap = new LinkedHashMap<>();
