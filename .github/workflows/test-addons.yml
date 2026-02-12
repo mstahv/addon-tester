@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       vaadin_version:
-        description: 'Vaadin version to test against'
+        description: 'Vaadin version to test against (leave empty for latest)'
         required: false
-        default: '25.0.5'
+        default: ''
 
 jobs:
   test:
@@ -33,7 +33,11 @@ jobs:
       - name: Run Add-on Tests
         run: |
           source "$HOME/.sdkman/bin/sdkman-init.sh"
-          jbang AddonTester.java -v ${{ github.event.inputs.vaadin_version || '25.0.5' }}
+          if [ -n "${{ github.event.inputs.vaadin_version }}" ]; then
+            jbang AddonTester.java -q -v "${{ github.event.inputs.vaadin_version }}"
+          else
+            jbang AddonTester.java -q
+          fi
 
       - name: Upload build logs
         if: always()

@@ -7,9 +7,12 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 import java.io.*;
+import java.net.URI;
+import java.net.http.*;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.regex.*;
 
 @Command(name = "addon-tester", mixinStandardHelpOptions = true, version = "1.0",
         description = "Tests Vaadin add-ons against framework version changes")
@@ -27,7 +30,9 @@ public class AddonTester implements Callable<Integer> {
 
     private static final int TAIL_LINES = 10;
 
-    @Option(names = {"--vaadin.version", "-v"}, description = "Vaadin version to test against", defaultValue = "25.0.5")
+    private static final String FALLBACK_VERSION = "25.0.5";
+
+    @Option(names = {"--vaadin.version", "-v"}, description = "Vaadin version to test against (default: latest from Maven Central)")
     private String vaadinVersion;
 
     @Option(names = {"--work-dir", "-w"}, description = "Working directory for cloning projects", defaultValue = "work")
@@ -35,6 +40,12 @@ public class AddonTester implements Callable<Integer> {
 
     @Option(names = {"--clean", "-c"}, description = "Clean work directory before running")
     private boolean clean;
+
+    @Option(names = {"--addons", "-a"}, description = "Comma-separated list of add-on names to test (default: all)", split = ",")
+    private List<String> selectedAddons;
+
+    @Option(names = {"--quiet-downloads", "-q"}, description = "Silence Maven download progress messages")
+    private boolean quietDownloads;
 
     // Add-on configurations
     record AddonConfig(
@@ -82,6 +93,14 @@ public class AddonTester implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+        // Resolve Vaadin version if not specified
+        if (vaadinVersion == null || vaadinVersion.isBlank()) {
+            System.out.println("Fetching latest Vaadin version from Maven Central...");
+            vaadinVersion = fetchLatestVaadinVersion();
+            System.out.println("Using Vaadin version: " + vaadinVersion);
+            System.out.println();
+        }
+
         Path workPath = Path.of(workDir);
 
         if (clean && Files.exists(workPath)) {
@@ -91,8 +110,21 @@ public class AddonTester implements Callable<Integer> {
 
         Files.createDirectories(workPath);
 
+        // Filter add-ons if specific ones are requested
+        List<AddonConfig> addonsToTest = ADDONS;
+        if (selectedAddons != null && !selectedAddons.isEmpty()) {
+            addonsToTest = ADDONS.stream()
+                    .filter(a -> selectedAddons.contains(a.name()))
+                    .toList();
+            if (addonsToTest.isEmpty()) {
+                System.err.println("No matching add-ons found for: " + String.join(", ", selectedAddons));
+                System.err.println("Available add-ons: " + ADDONS.stream().map(AddonConfig::name).toList());
+                return 1;
+            }
+        }
+
         // Initialize status map
-        for (AddonConfig addon : ADDONS) {
+        for (AddonConfig addon : addonsToTest) {
             statusMap.put(addon.name(), addon.ignored() ? BuildStatus.IGNORED : BuildStatus.PENDING);
         }
 
@@ -103,7 +135,7 @@ public class AddonTester implements Callable<Integer> {
         printStatusTable();
         System.out.println();
 
-        for (AddonConfig addon : ADDONS) {
+        for (AddonConfig addon : addonsToTest) {
             if (addon.ignored()) {
                 results.add(new TestResult(addon.name(), false, "Ignored: " + addon.ignoreReason(), 0));
                 continue;
@@ -221,11 +253,34 @@ public class AddonTester implements Callable<Integer> {
             // Build with specified Vaadin version
             Path buildPath = addon.buildSubdir() != null ? addonPath.resolve(addon.buildSubdir()) : addonPath;
 
+            // Update Vaadin version in pom.xml using versions plugin
+            List<String> setPropertyArgs = new ArrayList<>(List.of(
+                    "versions:set-property",
+                    "-Dproperty=vaadin.version",
+                    "-DnewVersion=" + vaadinVersion,
+                    "-DgenerateBackupPoms=false",
+                    "-B"
+            ));
+            if (quietDownloads) setPropertyArgs.add("--no-transfer-progress");
+            runMavenSilent(buildPath, logFile, addon.javaVersion(), setPropertyArgs);
+
+            // Also try versions:set for direct vaadin-bom references
+            List<String> setVersionArgs = new ArrayList<>(List.of(
+                    "versions:set",
+                    "-DnewVersion=" + vaadinVersion,
+                    "-DartifactId=vaadin-bom",
+                    "-DgenerateBackupPoms=false",
+                    "-B"
+            ));
+            if (quietDownloads) setVersionArgs.add("--no-transfer-progress");
+            runMavenSilent(buildPath, logFile, addon.javaVersion(), setVersionArgs);
+
+            // Run the actual build
             List<String> mvnArgs = new ArrayList<>();
             mvnArgs.add("clean");
             mvnArgs.add("verify");
-            mvnArgs.add("-Dvaadin.version=" + vaadinVersion);
-            mvnArgs.add("-B");
+            mvnArgs.add("-B"); // Batch mode
+            if (quietDownloads) mvnArgs.add("--no-transfer-progress");
             mvnArgs.addAll(addon.extraMvnArgs());
 
             int buildResult = runMavenWithTail(buildPath, logFile, addon.javaVersion(), mvnArgs);
@@ -265,6 +320,41 @@ public class AddonTester implements Callable<Integer> {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(workDir.toFile());
         pb.redirectErrorStream(true);
+
+        Process process = pb.start();
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+             BufferedWriter writer = Files.newBufferedWriter(logFile, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                writer.write(line);
+                writer.newLine();
+            }
+        }
+
+        return process.waitFor();
+    }
+
+    private int runMavenSilent(Path workDir, Path logFile, String javaVersion, List<String> mvnArgs) throws IOException, InterruptedException {
+        String mvnCommand = "mvn " + String.join(" ", mvnArgs);
+
+        List<String> command;
+        if (javaVersion != null) {
+            String sdkmanInit = "export SDKMAN_DIR=\"$HOME/.sdkman\" && source \"$SDKMAN_DIR/bin/sdkman-init.sh\"";
+            String sdkInstall = "yes | sdk install java " + javaVersion + " || true";
+            String sdkUse = "sdk use java " + javaVersion;
+            String fullCommand = sdkmanInit + " && " + sdkInstall + " && " + sdkUse + " && " + mvnCommand;
+            command = List.of("bash", "-c", fullCommand);
+        } else {
+            command = new ArrayList<>();
+            command.add("mvn");
+            command.addAll(mvnArgs);
+        }
+
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.directory(workDir.toFile());
+        pb.redirectErrorStream(true);
+        pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
 
         Process process = pb.start();
 
@@ -346,6 +436,32 @@ public class AddonTester implements Callable<Integer> {
 
     private long elapsed(long startTime) {
         return System.currentTimeMillis() - startTime;
+    }
+
+    private String fetchLatestVaadinVersion() {
+        try {
+            HttpClient client = HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://repo1.maven.org/maven2/com/vaadin/vaadin-bom/maven-metadata.xml"))
+                    .timeout(java.time.Duration.ofSeconds(10))
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                // Parse <release> tag from maven-metadata.xml
+                Pattern pattern = Pattern.compile("<release>([^<]+)</release>");
+                Matcher matcher = pattern.matcher(response.body());
+                if (matcher.find()) {
+                    return matcher.group(1);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Warning: Could not fetch latest version: " + e.getMessage());
+        }
+        System.err.println("Using fallback version: " + FALLBACK_VERSION);
+        return FALLBACK_VERSION;
     }
 
     private void deleteDirectory(Path path) throws IOException {

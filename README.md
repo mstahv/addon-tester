@@ -28,9 +28,11 @@ jbang AddonTester.java
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-v`, `--vaadin.version` | Vaadin version to test against | `25.0.5` |
+| `-v`, `--vaadin.version` | Vaadin version to test against | latest from Maven Central |
 | `-w`, `--work-dir` | Working directory for cloning projects | `work` |
 | `-c`, `--clean` | Clean work directory before running | `false` |
+| `-a`, `--addons` | Comma-separated list of add-on names to test | all |
+| `-q`, `--quiet-downloads` | Silence Maven download progress messages | `false` |
 | `-h`, `--help` | Show help message | |
 | `-V`, `--version` | Print version info | |
 
@@ -49,6 +51,11 @@ Test against a specific Vaadin version:
 Clean the work directory and run fresh:
 ```bash
 ./AddonTester.java --clean -v 25.0.5
+```
+
+Test only specific add-ons:
+```bash
+./AddonTester.java -a hugerte-for-flow,super-fields
 ```
 
 ## Adding Add-ons
