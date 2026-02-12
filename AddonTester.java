@@ -47,6 +47,8 @@ public class AddonTester implements Callable<Integer> {
     @Option(names = {"--quiet-downloads", "-q"}, description = "Silence Maven download progress messages")
     private boolean quietDownloads;
 
+    private boolean useCustomSettings = false;
+
     // Add-on configurations
     record AddonConfig(
             String name,
@@ -98,6 +100,12 @@ public class AddonTester implements Callable<Integer> {
             System.out.println("Fetching latest Vaadin version from Maven Central...");
             vaadinVersion = fetchLatestVaadinVersion();
             System.out.println("Using Vaadin version: " + vaadinVersion);
+            System.out.println();
+        } else {
+            // Custom version specified - use pre-release settings for snapshots/betas
+            useCustomSettings = true;
+            System.out.println("Using custom Vaadin version: " + vaadinVersion);
+            System.out.println("Pre-release/snapshot repositories enabled via settings.xml");
             System.out.println();
         }
 
@@ -254,33 +262,28 @@ public class AddonTester implements Callable<Integer> {
             Path buildPath = addon.buildSubdir() != null ? addonPath.resolve(addon.buildSubdir()) : addonPath;
 
             // Update Vaadin version in pom.xml using versions plugin
-            List<String> setPropertyArgs = new ArrayList<>(List.of(
-                    "versions:set-property",
-                    "-Dproperty=vaadin.version",
-                    "-DnewVersion=" + vaadinVersion,
-                    "-DgenerateBackupPoms=false",
-                    "-B"
-            ));
-            if (quietDownloads) setPropertyArgs.add("--no-transfer-progress");
+            List<String> setPropertyArgs = new ArrayList<>();
+            setPropertyArgs.add("versions:set-property");
+            setPropertyArgs.add("-Dproperty=vaadin.version");
+            setPropertyArgs.add("-DnewVersion=" + vaadinVersion);
+            setPropertyArgs.add("-DgenerateBackupPoms=false");
+            setPropertyArgs.addAll(getCommonMvnArgs());
             runMavenSilent(buildPath, logFile, addon.javaVersion(), setPropertyArgs);
 
             // Also try versions:set for direct vaadin-bom references
-            List<String> setVersionArgs = new ArrayList<>(List.of(
-                    "versions:set",
-                    "-DnewVersion=" + vaadinVersion,
-                    "-DartifactId=vaadin-bom",
-                    "-DgenerateBackupPoms=false",
-                    "-B"
-            ));
-            if (quietDownloads) setVersionArgs.add("--no-transfer-progress");
+            List<String> setVersionArgs = new ArrayList<>();
+            setVersionArgs.add("versions:set");
+            setVersionArgs.add("-DnewVersion=" + vaadinVersion);
+            setVersionArgs.add("-DartifactId=vaadin-bom");
+            setVersionArgs.add("-DgenerateBackupPoms=false");
+            setVersionArgs.addAll(getCommonMvnArgs());
             runMavenSilent(buildPath, logFile, addon.javaVersion(), setVersionArgs);
 
             // Run the actual build
             List<String> mvnArgs = new ArrayList<>();
             mvnArgs.add("clean");
             mvnArgs.add("verify");
-            mvnArgs.add("-B"); // Batch mode
-            if (quietDownloads) mvnArgs.add("--no-transfer-progress");
+            mvnArgs.addAll(getCommonMvnArgs());
             mvnArgs.addAll(addon.extraMvnArgs());
 
             int buildResult = runMavenWithTail(buildPath, logFile, addon.javaVersion(), mvnArgs);
@@ -436,6 +439,21 @@ public class AddonTester implements Callable<Integer> {
 
     private long elapsed(long startTime) {
         return System.currentTimeMillis() - startTime;
+    }
+
+    private List<String> getCommonMvnArgs() {
+        List<String> args = new ArrayList<>();
+        args.add("-B"); // Batch mode
+        if (quietDownloads) args.add("--no-transfer-progress");
+        if (useCustomSettings) {
+            // Use settings.xml from script directory for pre-release/snapshot repos
+            Path settingsPath = Path.of(System.getProperty("user.dir"), "settings.xml");
+            if (Files.exists(settingsPath)) {
+                args.add("--settings");
+                args.add(settingsPath.toAbsolutePath().toString());
+            }
+        }
+        return args;
     }
 
     private String fetchLatestVaadinVersion() {

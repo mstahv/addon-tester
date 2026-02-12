@@ -87,6 +87,22 @@ private static final List<AddonConfig> ADDONS = List.of(
 - `ignored` - Skip this add-on if true
 - `ignoreReason` - Reason for ignoring (shown in output)
 
+## Pre-releases and Snapshots
+
+When a custom Vaadin version is specified (via `-v`), the script automatically uses `settings.xml` which includes the Vaadin pre-release and snapshot repositories:
+
+- `https://maven.vaadin.com/vaadin-prereleases` - For beta, RC, and snapshot versions
+
+This allows testing add-ons against unreleased Vaadin versions:
+
+```bash
+# Test against a beta version
+./AddonTester.java -v 25.1.0.beta1
+
+# Test against a snapshot
+./AddonTester.java -v 25.1-SNAPSHOT
+```
+
 ## GitHub Actions
 
 The repository includes a GitHub Actions workflow that can be triggered manually:
