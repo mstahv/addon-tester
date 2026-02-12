@@ -1,5 +1,13 @@
 # Vaadin Add-on Compatibility Tester
 
+[![Nightly Build](https://github.com/mstahv/addon-tester/actions/workflows/test-addons.yml/badge.svg?event=schedule)](https://github.com/mstahv/addon-tester/actions/workflows/test-addons.yml)
+
+## Latest Nightly Results
+
+<!-- RESULTS-START -->
+_No results yet. Results will be updated after the first scheduled run._
+<!-- RESULTS-END -->
+
 A JBang script for testing Vaadin add-ons against different Vaadin framework versions.
 
 ## Prerequisites

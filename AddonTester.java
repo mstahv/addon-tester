@@ -98,22 +98,22 @@ public class AddonTester implements Callable<Integer> {
     public Integer call() throws Exception {
         // Resolve Vaadin version if not specified
         if (vaadinVersion == null || vaadinVersion.isBlank()) {
-            System.out.println("Fetching latest Vaadin version from Maven Central...");
+            System.out.println("🔍 Fetching latest Vaadin version from Maven Central...");
             vaadinVersion = fetchLatestVaadinVersion();
-            System.out.println("Using Vaadin version: " + vaadinVersion);
+            System.out.println("📦 Using Vaadin version: " + vaadinVersion);
             System.out.println();
         } else {
             // Custom version specified - use pre-release settings for snapshots/betas
             useCustomSettings = true;
-            System.out.println("Using custom Vaadin version: " + vaadinVersion);
-            System.out.println("Pre-release/snapshot repositories enabled via settings.xml");
+            System.out.println("📦 Using custom Vaadin version: " + vaadinVersion);
+            System.out.println("🔓 Pre-release/snapshot repositories enabled via settings.xml");
             System.out.println();
         }
 
         Path workPath = Path.of(workDir);
 
         if (clean && Files.exists(workPath)) {
-            System.out.println("Cleaning work directory...");
+            System.out.println("🧹 Cleaning work directory...");
             deleteDirectory(workPath);
         }
 
@@ -126,8 +126,8 @@ public class AddonTester implements Callable<Integer> {
                     .filter(a -> selectedAddons.contains(a.name()))
                     .toList();
             if (addonsToTest.isEmpty()) {
-                System.err.println("No matching add-ons found for: " + String.join(", ", selectedAddons));
-                System.err.println("Available add-ons: " + ADDONS.stream().map(AddonConfig::name).toList());
+                System.err.println("❓ No matching add-ons found for: " + String.join(", ", selectedAddons));
+                System.err.println("📋 Available add-ons: " + ADDONS.stream().map(AddonConfig::name).toList());
                 return 1;
             }
         }
@@ -170,7 +170,7 @@ public class AddonTester implements Callable<Integer> {
             // Show result for this addon
             if (!result.success()) {
                 System.out.println();
-                System.out.printf("  %s%s failed. Log: %s%s%n", RED, addon.name(), result.logFile(), RESET);
+                System.out.printf("  %s💥 %s failed. Log: %s%s%n", RED, addon.name(), result.logFile(), RESET);
             }
             System.out.println();
         }
@@ -186,8 +186,8 @@ public class AddonTester implements Callable<Integer> {
 
     private void printHeader() {
         System.out.println("=".repeat(60));
-        System.out.println("Vaadin Add-on Compatibility Tester");
-        System.out.println("Testing against Vaadin version: " + CYAN + vaadinVersion + RESET);
+        System.out.println("🧪 Vaadin Add-on Compatibility Tester");
+        System.out.println("🎯 Testing against Vaadin version: " + CYAN + vaadinVersion + RESET);
         System.out.println("=".repeat(60));
     }
 
@@ -199,11 +199,11 @@ public class AddonTester implements Callable<Integer> {
             String durationStr = duration != null ? String.format(" (%.1fs)", duration / 1000.0) : "";
 
             String statusStr = switch (status) {
-                case PENDING -> DIM + "PENDING" + RESET;
-                case BUILDING -> YELLOW + "BUILDING..." + RESET;
-                case PASSED -> GREEN + "PASSED" + RESET + durationStr;
-                case FAILED -> RED + "FAILED" + RESET + durationStr;
-                case IGNORED -> DIM + "IGNORED" + RESET;
+                case PENDING -> DIM + "⏳ PENDING" + RESET;
+                case BUILDING -> YELLOW + "🔨 BUILDING..." + RESET;
+                case PASSED -> GREEN + "✅ PASSED" + RESET + durationStr;
+                case FAILED -> RED + "❌ FAILED" + RESET + durationStr;
+                case IGNORED -> DIM + "⏭️  IGNORED" + RESET;
             };
 
             System.out.printf("  %-30s %s%n", name, statusStr);
@@ -285,6 +285,9 @@ public class AddonTester implements Callable<Integer> {
             mvnArgs.add("clean");
             mvnArgs.add("verify");
             mvnArgs.addAll(getCommonMvnArgs());
+            if (addon.useAddonsRepo()) {
+                mvnArgs.add("-Pvaadin-addons"); // Enable Vaadin Directory repository
+            }
             mvnArgs.addAll(addon.extraMvnArgs());
 
             int buildResult = runMavenWithTail(buildPath, logFile, addon.javaVersion(), mvnArgs);
@@ -477,9 +480,9 @@ public class AddonTester implements Callable<Integer> {
                 }
             }
         } catch (Exception e) {
-            System.err.println("Warning: Could not fetch latest version: " + e.getMessage());
+            System.err.println("⚠️  Warning: Could not fetch latest version: " + e.getMessage());
         }
-        System.err.println("Using fallback version: " + FALLBACK_VERSION);
+        System.err.println("📦 Using fallback version: " + FALLBACK_VERSION);
         return FALLBACK_VERSION;
     }
 
@@ -494,7 +497,7 @@ public class AddonTester implements Callable<Integer> {
 
     private void printFinalSummary(List<TestResult> results) {
         System.out.println("-".repeat(60));
-        System.out.println("Build logs saved to: " + workDir + "/");
+        System.out.println("📁 Build logs saved to: " + workDir + "/");
         System.out.println();
 
         int passed = 0, failed = 0, ignored = 0;
@@ -508,12 +511,54 @@ public class AddonTester implements Callable<Integer> {
             }
         }
 
-        System.out.printf("Total: %d | %sPassed: %d%s | %sFailed: %d%s | Ignored: %d%n",
+        String summaryIcon = failed == 0 ? "🎉" : "💔";
+        System.out.printf("%s Total: %d | %s✅ Passed: %d%s | %s❌ Failed: %d%s | ⏭️  Ignored: %d%n",
+                summaryIcon,
                 results.size(),
                 GREEN, passed, RESET,
                 failed > 0 ? RED : "", failed, failed > 0 ? RESET : "",
                 ignored);
         System.out.println("=".repeat(60));
+
+        // Write markdown report
+        writeMarkdownReport(results, passed, failed, ignored);
+    }
+
+    private void writeMarkdownReport(List<TestResult> results, int passed, int failed, int ignored) {
+        Path reportPath = Path.of(workDir, "results.md");
+        try (BufferedWriter writer = Files.newBufferedWriter(reportPath)) {
+            String status = failed == 0 ? "🎉 All tests passed" : "💔 Some tests failed";
+            String timestamp = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + " UTC";
+
+            writer.write("**Vaadin Version:** `" + vaadinVersion + "`\n");
+            writer.write("**Last Run:** " + timestamp + "\n");
+            writer.write("**Status:** " + status + "\n\n");
+
+            writer.write("| Add-on | Status | Duration |\n");
+            writer.write("|--------|--------|----------|\n");
+
+            for (TestResult result : results) {
+                String statusEmoji;
+                if (result.message().startsWith("Ignored:")) {
+                    statusEmoji = "⏭️ IGNORED";
+                } else if (result.success()) {
+                    statusEmoji = "✅ PASSED";
+                } else {
+                    statusEmoji = "❌ FAILED";
+                }
+                String duration = result.durationMs() > 0
+                        ? String.format("%.1fs", result.durationMs() / 1000.0)
+                        : "-";
+                writer.write("| " + result.addonName() + " | " + statusEmoji + " | " + duration + " |\n");
+            }
+
+            writer.write("\n**Summary:** " + results.size() + " total | ✅ " + passed + " passed | ❌ " + failed + " failed | ⏭️ " + ignored + " ignored\n");
+
+            System.out.println("📊 Report saved to: " + reportPath);
+        } catch (IOException e) {
+            System.err.println("⚠️  Warning: Could not write report: " + e.getMessage());
+        }
     }
 
     public static void main(String... args) {
