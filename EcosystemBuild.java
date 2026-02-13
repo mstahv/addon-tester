@@ -735,7 +735,14 @@ public class EcosystemBuild implements Callable<Integer> {
             // Clone or update repository
             if (!Files.exists(projectPath)) {
                 if (!silent) System.out.println("  " + DIM + "📥 Cloning " + repoUrl + "..." + RESET);
-                int cloneResult = runCommandSilent(workPath, logFile, "git", "clone", "--depth", "1", "--single-branch", repoUrl, name);
+                List<String> cloneCmd = new ArrayList<>(List.of("git", "clone", "--depth", "1", "--single-branch"));
+                if (branch != null) {
+                    cloneCmd.add("-b");
+                    cloneCmd.add(branch);
+                }
+                cloneCmd.add(repoUrl);
+                cloneCmd.add(name);
+                int cloneResult = runCommandSilent(workPath, logFile, cloneCmd.toArray(new String[0]));
                 if (cloneResult != 0) {
                     return new TestResult(name, type, false, "Failed to clone repository", elapsed(startTime), logFile);
                 }
@@ -743,21 +750,11 @@ public class EcosystemBuild implements Callable<Integer> {
                 if (!silent) System.out.println("  " + DIM + "🔄 Updating repository..." + RESET);
                 // Discard any local changes (e.g., from versions plugin)
                 runCommandSilent(projectPath, logFile, "git", "checkout", "--", ".");
-                runCommandSilent(projectPath, logFile, "git", "fetch", "--depth", "1");
-                // Get the default branch from remote
-                String defaultBranchName = branch != null ? branch : getDefaultBranch(projectPath, logFile);
-                runCommandSilent(projectPath, logFile, "git", "reset", "--hard", "origin/" + defaultBranchName);
-            }
-
-            // Checkout specific branch if configured
-            if (branch != null) {
-                int checkoutResult = runCommandSilent(projectPath, logFile, "git", "checkout", branch);
-                if (checkoutResult != 0) {
-                    checkoutResult = runCommandSilent(projectPath, logFile, "git", "checkout", "-b", branch, "origin/" + branch);
-                    if (checkoutResult != 0) {
-                        return new TestResult(name, type, false, "Failed to checkout branch: " + branch, elapsed(startTime), logFile);
-                    }
-                }
+                // Fetch the specific branch or default
+                String targetBranch = branch != null ? branch : getDefaultBranch(projectPath, logFile);
+                runCommandSilent(projectPath, logFile, "git", "fetch", "--depth", "1", "origin", targetBranch);
+                runCommandSilent(projectPath, logFile, "git", "checkout", targetBranch);
+                runCommandSilent(projectPath, logFile, "git", "reset", "--hard", "origin/" + targetBranch);
             }
 
             // Build with specified Vaadin version
