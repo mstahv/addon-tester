@@ -4,9 +4,19 @@
 
 **[View Build Status Dashboard](https://ecosystembuild.parttio.org)** - Live results for all tested Vaadin versions
 
-This project continuously validates that popular Vaadin add-ons and example applications build successfully against the latest Vaadin framework versions, including snapshots. It helps detect compatibility issues early, before they affect end users.
+This project continuously validates that Vaadin add-ons and applications build successfully against the latest Vaadin framework versions, including unreleased snapshots. It helps detect compatibility issues early, before they affect end users.
 
-**Want your project included?** [Create an issue](https://github.com/mstahv/vaadin-ecosystem-build/issues/new) to propose your add-on or application for the test battery.
+## Add Your Project
+
+**The more projects we test, the better!** Each additional project increases test coverage and helps the Vaadin team catch regressions before releases. When your project is included:
+
+- **Early warning**: You'll know about breaking changes in Vaadin before they're released
+- **Help Vaadin**: Your real-world usage patterns help catch edge cases that unit tests miss
+- **Stay compatible**: Automatic testing against snapshots means fewer surprises when updating
+
+[Create an issue](https://github.com/mstahv/vaadin-ecosystem-build/issues/new) to propose your add-on or application. Both public add-ons and example applications are welcome.
+
+## About
 
 A JBang script for testing Vaadin ecosystem projects (add-ons and applications) against different Vaadin framework versions.
 
