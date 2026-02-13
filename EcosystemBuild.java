@@ -53,8 +53,6 @@ public class EcosystemBuild implements Callable<Integer> {
         new AddonProject() {{
             name = "vaadin-ckeditor";
             repoUrl = "https://github.com/wontlost-ltd/vaadin-ckeditor";
-            ignored = true;
-            ignoreReason = "Build too slow - broken vaadin-snapshots repo";
         }},
         new AddonProject() {{
             name = "svg-visualizations";
