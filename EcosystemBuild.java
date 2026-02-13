@@ -19,84 +19,10 @@ import java.util.regex.*;
         description = "Tests Vaadin ecosystem projects against framework version changes")
 public class EcosystemBuild implements Callable<Integer> {
 
-    // ANSI color codes
-    private static final String RED = "\u001B[31m";
-    private static final String GREEN = "\u001B[32m";
-    private static final String YELLOW = "\u001B[33m";
-    private static final String CYAN = "\u001B[36m";
-    private static final String DIM = "\u001B[2m";
-    private static final String RESET = "\u001B[0m";
-    private static final String CLEAR_LINE = "\u001B[2K";
-    private static final String MOVE_UP = "\u001B[1A";
+    // ============================================================
+    // PROJECT CONFIGURATION - Edit these lists to add/remove projects
+    // ============================================================
 
-    private static final int TAIL_LINES = 10;
-
-    private static final String FALLBACK_VERSION = "25.0.5";
-
-    @Option(names = {"--vaadin.version", "-v"}, description = "Vaadin version to test against (default: latest from Maven Central)")
-    private String vaadinVersion;
-
-    @Option(names = {"--work-dir", "-w"}, description = "Working directory for cloning projects", defaultValue = "work")
-    private String workDir;
-
-    @Option(names = {"--clean", "-c"}, description = "Clean work directory before running")
-    private boolean clean;
-
-    @Option(names = {"--projects", "-p"}, description = "Comma-separated list of project names to test (default: all)", split = ",")
-    private List<String> selectedProjects;
-
-    @Option(names = {"--quiet-downloads", "-q"}, description = "Silence Maven download progress messages")
-    private boolean quietDownloads;
-
-    @Option(names = {"--timeout", "-t"}, description = "Build timeout per project in minutes", defaultValue = "2")
-    private int timeoutMinutes;
-
-    @Option(names = {"--buildThreads", "-j"}, description = "Number of concurrent builds (default: 1)", defaultValue = "1")
-    private int buildThreads;
-
-    private boolean useCustomSettings = false;
-    private Path versionOutputPath;  // Version-specific output directory for logs and reports
-
-    // Project types
-    enum ProjectType { SMOKE_TEST, ADDON, APP }
-
-    // Project configuration base class
-    static class AddonProject {
-        public String name;
-        public String repoUrl;
-        public String branch;           // Git branch (null = auto-detect default)
-        public String buildSubdir;      // Subdirectory to run Maven in
-        public String javaVersion;      // SDKMAN Java version (e.g., "21-tem")
-        public boolean useAddonsRepo;   // Enable Vaadin Directory repository
-        public List<String> extraMvnArgs = List.of();
-        public boolean ignored;
-        public String ignoreReason;
-    }
-
-    // App project configuration
-    static class AppProject {
-        public String name;
-        public String repoUrl;
-        public String branch;           // Git branch (null = auto-detect default)
-        public String buildSubdir;      // Subdirectory to run Maven in
-        public String javaVersion;      // SDKMAN Java version (e.g., "21-tem")
-        public boolean useAddonsRepo;   // Enable Vaadin Directory repository
-        public List<String> extraMvnArgs = List.of();
-        public boolean ignored;
-        public String ignoreReason;
-    }
-
-    // Test result
-    record TestResult(String projectName, ProjectType type, boolean success, String message, long durationMs, Path logFile) {
-        TestResult(String projectName, ProjectType type, boolean success, String message, long durationMs) {
-            this(projectName, type, success, message, durationMs, null);
-        }
-    }
-
-    // Build status for display
-    enum BuildStatus { PENDING, WAITING, BUILDING, PASSED, FAILED, KNOWN_ISSUE, IGNORED }
-
-    // Configure add-ons to test here
     private static final List<AddonProject> ADDONS = List.of(
         new AddonProject() {{
             name = "hugerte-for-flow";
@@ -140,13 +66,93 @@ public class EcosystemBuild implements Callable<Integer> {
         }}
     );
 
-    // Configure apps to test here
     private static final List<AppProject> APPS = List.of(
         new AppProject() {{
             name = "spring-boot-spatial-example";
             repoUrl = "https://github.com/mstahv/spring-boot-spatial-example";
         }}
     );
+
+    // ============================================================
+    // END OF PROJECT CONFIGURATION
+    // ============================================================
+
+    // ANSI color codes
+    private static final String RED = "\u001B[31m";
+    private static final String GREEN = "\u001B[32m";
+    private static final String YELLOW = "\u001B[33m";
+    private static final String CYAN = "\u001B[36m";
+    private static final String DIM = "\u001B[2m";
+    private static final String RESET = "\u001B[0m";
+    private static final String CLEAR_LINE = "\u001B[2K";
+    private static final String MOVE_UP = "\u001B[1A";
+
+    private static final int TAIL_LINES = 10;
+
+    private static final String FALLBACK_VERSION = "25.0.5";
+
+    @Option(names = {"--vaadin.version", "-v"}, description = "Vaadin version to test against (default: latest from Maven Central)")
+    private String vaadinVersion;
+
+    @Option(names = {"--work-dir", "-w"}, description = "Working directory for cloning projects", defaultValue = "work")
+    private String workDir;
+
+    @Option(names = {"--clean", "-c"}, description = "Clean version-specific output directory before running")
+    private boolean clean;
+
+    @Option(names = {"--projects", "-p"}, description = "Comma-separated list of project names to test (default: all)", split = ",")
+    private List<String> selectedProjects;
+
+    @Option(names = {"--quiet-downloads", "-q"}, description = "Silence Maven download progress messages")
+    private boolean quietDownloads;
+
+    @Option(names = {"--timeout", "-t"}, description = "Build timeout per project in minutes", defaultValue = "2")
+    private int timeoutMinutes;
+
+    @Option(names = {"--buildThreads", "-j"}, description = "Number of concurrent builds (default: 1)", defaultValue = "1")
+    private int buildThreads;
+
+    private boolean useCustomSettings = false;
+    private Path versionOutputPath;  // Version-specific output directory for logs and reports
+
+    // Project types
+    enum ProjectType { SMOKE_TEST, ADDON, APP }
+
+    // Project configuration
+    static class AddonProject {
+        String name;
+        String repoUrl;
+        String branch;           // Git branch (null = auto-detect default)
+        String buildSubdir;      // Subdirectory to run Maven in
+        String javaVersion;      // SDKMAN Java version (e.g., "21-tem")
+        boolean useAddonsRepo;   // Enable Vaadin Directory repository
+        List<String> extraMvnArgs = List.of();
+        boolean ignored;
+        String ignoreReason;
+    }
+
+    // App project configuration
+    static class AppProject {
+        String name;
+        String repoUrl;
+        String branch;
+        String buildSubdir;
+        String javaVersion;
+        boolean useAddonsRepo;
+        List<String> extraMvnArgs = List.of();
+        boolean ignored;
+        String ignoreReason;
+    }
+
+    // Test result
+    record TestResult(String projectName, ProjectType type, boolean success, String message, long durationMs, Path logFile) {
+        TestResult(String projectName, ProjectType type, boolean success, String message, long durationMs) {
+            this(projectName, type, success, message, durationMs, null);
+        }
+    }
+
+    // Build status for display
+    enum BuildStatus { PENDING, WAITING, BUILDING, PASSED, FAILED, KNOWN_ISSUE, IGNORED }
 
     private final Map<String, BuildStatus> statusMap = new LinkedHashMap<>();
     private final Map<String, ProjectType> projectTypes = new HashMap<>();
@@ -172,16 +178,15 @@ public class EcosystemBuild implements Callable<Integer> {
         }
 
         Path workPath = Path.of(workDir);
-
-        if (clean && Files.exists(workPath)) {
-            System.out.println("🧹 Cleaning work directory...");
-            deleteDirectory(workPath);
-        }
-
         Files.createDirectories(workPath);
 
         // Create version-specific output directory for logs and reports
         versionOutputPath = workPath.resolve(vaadinVersion);
+
+        if (clean && Files.exists(versionOutputPath)) {
+            System.out.println("🧹 Cleaning version output directory: " + versionOutputPath);
+            deleteDirectory(versionOutputPath);
+        }
         Files.createDirectories(versionOutputPath);
 
         // Run smoke test first to validate Vaadin version and cache artifacts

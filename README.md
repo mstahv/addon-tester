@@ -40,7 +40,7 @@ jbang EcosystemBuild.java
 |--------|-------------|---------|
 | `-v`, `--vaadin.version` | Vaadin version to test against | latest from Maven Central |
 | `-w`, `--work-dir` | Working directory for cloning projects | `work` |
-| `-c`, `--clean` | Clean work directory before running | `false` |
+| `-c`, `--clean` | Clean version-specific output directory before running | `false` |
 | `-p`, `--projects` | Comma-separated list of project names to test | all |
 | `-j`, `--buildThreads` | Number of concurrent builds | `1` |
 | `-q`, `--quiet-downloads` | Silence Maven download progress messages | `false` |
@@ -77,11 +77,7 @@ Run builds in parallel (4 concurrent jobs):
 
 ## Adding Projects
 
-Edit `EcosystemBuild.java` to configure which projects to test. Projects are organized by type:
-
-### Add-ons
-
-Edit the `ADDONS` list:
+Edit the `ADDONS` and `APPS` lists at the top of `EcosystemBuild.java`:
 
 ```java
 private static final List<AddonProject> ADDONS = List.of(
@@ -96,13 +92,7 @@ private static final List<AddonProject> ADDONS = List.of(
         javaVersion = "21-tem";
     }}
 );
-```
 
-### Applications
-
-Edit the `APPS` list:
-
-```java
 private static final List<AppProject> APPS = List.of(
     new AppProject() {{
         name = "my-app";
