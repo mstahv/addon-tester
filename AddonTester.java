@@ -15,8 +15,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.*;
 
-@Command(name = "addon-tester", mixinStandardHelpOptions = true, version = "1.0",
-        description = "Tests Vaadin add-ons against framework version changes")
+@Command(name = "ecosystem-build", mixinStandardHelpOptions = true, version = "1.0",
+        description = "Tests Vaadin ecosystem projects against framework version changes")
 public class AddonTester implements Callable<Integer> {
 
     // ANSI color codes
@@ -42,19 +42,35 @@ public class AddonTester implements Callable<Integer> {
     @Option(names = {"--clean", "-c"}, description = "Clean work directory before running")
     private boolean clean;
 
-    @Option(names = {"--addons", "-a"}, description = "Comma-separated list of add-on names to test (default: all)", split = ",")
-    private List<String> selectedAddons;
+    @Option(names = {"--projects", "-p"}, description = "Comma-separated list of project names to test (default: all)", split = ",")
+    private List<String> selectedProjects;
 
     @Option(names = {"--quiet-downloads", "-q"}, description = "Silence Maven download progress messages")
     private boolean quietDownloads;
 
-    @Option(names = {"--timeout", "-t"}, description = "Build timeout per add-on in minutes", defaultValue = "2")
+    @Option(names = {"--timeout", "-t"}, description = "Build timeout per project in minutes", defaultValue = "2")
     private int timeoutMinutes;
 
     private boolean useCustomSettings = false;
 
-    // Add-on configuration
-    static class AddonConfig {
+    // Project types
+    enum ProjectType { ADDON, APP }
+
+    // Project configuration base class
+    static class AddonProject {
+        public String name;
+        public String repoUrl;
+        public String branch;           // Git branch (null = auto-detect default)
+        public String buildSubdir;      // Subdirectory to run Maven in
+        public String javaVersion;      // SDKMAN Java version (e.g., "21-tem")
+        public boolean useAddonsRepo;   // Enable Vaadin Directory repository
+        public List<String> extraMvnArgs = List.of();
+        public boolean ignored;
+        public String ignoreReason;
+    }
+
+    // App project configuration
+    static class AppProject {
         public String name;
         public String repoUrl;
         public String branch;           // Git branch (null = auto-detect default)
@@ -67,9 +83,9 @@ public class AddonTester implements Callable<Integer> {
     }
 
     // Test result
-    record TestResult(String addonName, boolean success, String message, long durationMs, Path logFile) {
-        TestResult(String addonName, boolean success, String message, long durationMs) {
-            this(addonName, success, message, durationMs, null);
+    record TestResult(String projectName, ProjectType type, boolean success, String message, long durationMs, Path logFile) {
+        TestResult(String projectName, ProjectType type, boolean success, String message, long durationMs) {
+            this(projectName, type, success, message, durationMs, null);
         }
     }
 
@@ -77,50 +93,59 @@ public class AddonTester implements Callable<Integer> {
     enum BuildStatus { PENDING, BUILDING, PASSED, FAILED, IGNORED }
 
     // Configure add-ons to test here
-    private static final List<AddonConfig> ADDONS = List.of(
-        new AddonConfig() {{
+    private static final List<AddonProject> ADDONS = List.of(
+        new AddonProject() {{
             name = "hugerte-for-flow";
             repoUrl = "https://github.com/parttio/hugerte-for-flow";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "super-fields";
             repoUrl = "https://github.com/vaadin-miki/super-fields";
             buildSubdir = "superfields";
             javaVersion = "21-tem";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "flow-viritin";
             repoUrl = "https://github.com/viritin/flow-viritin";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "grid-pagination";
             repoUrl = "https://github.com/parttio/grid-pagination";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "vaadin-fullcalendar";
             repoUrl = "https://github.com/stefanuebe/vaadin-fullcalendar";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "vaadin-maps-leaflet-flow";
             repoUrl = "https://github.com/xdev-software/vaadin-maps-leaflet-flow";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "vaadin-ckeditor";
             repoUrl = "https://github.com/wontlost-ltd/vaadin-ckeditor";
             ignored = true;
             ignoreReason = "Build too slow - broken vaadin-snapshots repo";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "svg-visualizations";
             repoUrl = "https://github.com/viritin/svg-visualizations";
         }},
-        new AddonConfig() {{
+        new AddonProject() {{
             name = "maplibre";
             repoUrl = "https://github.com/parttio/maplibre";
         }}
     );
 
+    // Configure apps to test here
+    private static final List<AppProject> APPS = List.of(
+        new AppProject() {{
+            name = "spring-boot-spatial-example";
+            repoUrl = "https://github.com/mstahv/spring-boot-spatial-example";
+        }}
+    );
+
     private final Map<String, BuildStatus> statusMap = new LinkedHashMap<>();
+    private final Map<String, ProjectType> projectTypes = new HashMap<>();
     private final Map<String, Long> durationMap = new HashMap<>();
     private final Map<String, Long> buildStartTimeMap = new HashMap<>();
     private int lastOutputLines = 0;
@@ -150,22 +175,36 @@ public class AddonTester implements Callable<Integer> {
 
         Files.createDirectories(workPath);
 
-        // Filter add-ons if specific ones are requested
-        List<AddonConfig> addonsToTest = ADDONS;
-        if (selectedAddons != null && !selectedAddons.isEmpty()) {
+        // Build list of all projects to test
+        List<AddonProject> addonsToTest = ADDONS;
+        List<AppProject> appsToTest = APPS;
+
+        // Filter projects if specific ones are requested
+        if (selectedProjects != null && !selectedProjects.isEmpty()) {
             addonsToTest = ADDONS.stream()
-                    .filter(a -> selectedAddons.contains(a.name))
+                    .filter(a -> selectedProjects.contains(a.name))
                     .toList();
-            if (addonsToTest.isEmpty()) {
-                System.err.println("❓ No matching add-ons found for: " + String.join(", ", selectedAddons));
-                System.err.println("📋 Available add-ons: " + ADDONS.stream().map(a -> a.name).toList());
+            appsToTest = APPS.stream()
+                    .filter(a -> selectedProjects.contains(a.name))
+                    .toList();
+            if (addonsToTest.isEmpty() && appsToTest.isEmpty()) {
+                System.err.println("❓ No matching projects found for: " + String.join(", ", selectedProjects));
+                var allNames = new ArrayList<String>();
+                ADDONS.forEach(a -> allNames.add(a.name));
+                APPS.forEach(a -> allNames.add(a.name));
+                System.err.println("📋 Available projects: " + allNames);
                 return 1;
             }
         }
 
-        // Initialize status map
-        for (AddonConfig addon : addonsToTest) {
+        // Initialize status map with project types
+        for (AddonProject addon : addonsToTest) {
             statusMap.put(addon.name, addon.ignored ? BuildStatus.IGNORED : BuildStatus.PENDING);
+            projectTypes.put(addon.name, ProjectType.ADDON);
+        }
+        for (AppProject app : appsToTest) {
+            statusMap.put(app.name, app.ignored ? BuildStatus.IGNORED : BuildStatus.PENDING);
+            projectTypes.put(app.name, ProjectType.APP);
         }
 
         List<TestResult> results = new ArrayList<>();
@@ -175,9 +214,10 @@ public class AddonTester implements Callable<Integer> {
         printStatusTable();
         System.out.println();
 
-        for (AddonConfig addon : addonsToTest) {
+        // Test add-ons
+        for (AddonProject addon : addonsToTest) {
             if (addon.ignored) {
-                results.add(new TestResult(addon.name, false, "Ignored: " + addon.ignoreReason, 0));
+                results.add(new TestResult(addon.name, ProjectType.ADDON, false, "Ignored: " + addon.ignoreReason, 0));
                 continue;
             }
 
@@ -188,8 +228,8 @@ public class AddonTester implements Callable<Integer> {
             printStatusTable();
             System.out.println();
 
-            long startTime = System.currentTimeMillis();
-            TestResult result = testAddon(addon, workPath);
+            TestResult result = testProject(addon.name, addon.repoUrl, addon.branch, addon.buildSubdir,
+                    addon.javaVersion, addon.useAddonsRepo, addon.extraMvnArgs, ProjectType.ADDON, workPath);
             results.add(result);
 
             durationMap.put(addon.name, result.durationMs());
@@ -199,10 +239,41 @@ public class AddonTester implements Callable<Integer> {
             printHeader();
             printStatusTable();
 
-            // Show result for this addon
             if (!result.success()) {
                 System.out.println();
                 System.out.printf("  %s💥 %s failed. Log: %s%s%n", RED, addon.name, result.logFile(), RESET);
+            }
+            System.out.println();
+        }
+
+        // Test apps
+        for (AppProject app : appsToTest) {
+            if (app.ignored) {
+                results.add(new TestResult(app.name, ProjectType.APP, false, "Ignored: " + app.ignoreReason, 0));
+                continue;
+            }
+
+            statusMap.put(app.name, BuildStatus.BUILDING);
+            buildStartTimeMap.put(app.name, System.currentTimeMillis());
+            clearOutput();
+            printHeader();
+            printStatusTable();
+            System.out.println();
+
+            TestResult result = testProject(app.name, app.repoUrl, app.branch, app.buildSubdir,
+                    app.javaVersion, app.useAddonsRepo, app.extraMvnArgs, ProjectType.APP, workPath);
+            results.add(result);
+
+            durationMap.put(app.name, result.durationMs());
+            statusMap.put(app.name, result.success() ? BuildStatus.PASSED : BuildStatus.FAILED);
+
+            clearOutput();
+            printHeader();
+            printStatusTable();
+
+            if (!result.success()) {
+                System.out.println();
+                System.out.printf("  %s💥 %s failed. Log: %s%s%n", RED, app.name, result.logFile(), RESET);
             }
             System.out.println();
         }
@@ -218,35 +289,56 @@ public class AddonTester implements Callable<Integer> {
 
     private void printHeader() {
         System.out.println("=".repeat(60));
-        System.out.println("🧪 Vaadin Add-on Compatibility Tester");
+        System.out.println("🏗️  Vaadin Ecosystem Build");
         System.out.println("🎯 Testing against Vaadin version: " + CYAN + vaadinVersion + RESET);
         System.out.println("=".repeat(60));
     }
 
     private void printStatusTable() {
-        for (var entry : statusMap.entrySet()) {
-            String name = entry.getKey();
-            BuildStatus status = entry.getValue();
-            Long duration = durationMap.get(name);
-            String durationStr = duration != null ? String.format(" (%.1fs)", duration / 1000.0) : "";
+        // Group by project type
+        var addons = statusMap.entrySet().stream()
+                .filter(e -> projectTypes.get(e.getKey()) == ProjectType.ADDON)
+                .toList();
+        var apps = statusMap.entrySet().stream()
+                .filter(e -> projectTypes.get(e.getKey()) == ProjectType.APP)
+                .toList();
 
-            String buildingTime = "";
-            Long startTime = buildStartTimeMap.get(name);
-            if (status == BuildStatus.BUILDING && startTime != null) {
-                long elapsedSec = (System.currentTimeMillis() - startTime) / 1000;
-                buildingTime = String.format(" (%ds)", elapsedSec);
+        if (!addons.isEmpty()) {
+            System.out.println("  " + CYAN + "📦 Add-ons" + RESET);
+            for (var entry : addons) {
+                printStatusLine(entry.getKey(), entry.getValue());
             }
-
-            String statusStr = switch (status) {
-                case PENDING -> DIM + "⏳ PENDING" + RESET;
-                case BUILDING -> YELLOW + "🔨 BUILDING..." + buildingTime + RESET;
-                case PASSED -> GREEN + "✅ PASSED" + RESET + durationStr;
-                case FAILED -> RED + "❌ FAILED" + RESET + durationStr;
-                case IGNORED -> DIM + "⏭️  IGNORED" + RESET;
-            };
-
-            System.out.printf("  %-30s %s%n", name, statusStr);
         }
+
+        if (!apps.isEmpty()) {
+            if (!addons.isEmpty()) System.out.println();
+            System.out.println("  " + CYAN + "🚀 Applications" + RESET);
+            for (var entry : apps) {
+                printStatusLine(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
+    private void printStatusLine(String name, BuildStatus status) {
+        Long duration = durationMap.get(name);
+        String durationStr = duration != null ? String.format(" (%.1fs)", duration / 1000.0) : "";
+
+        String buildingTime = "";
+        Long startTime = buildStartTimeMap.get(name);
+        if (status == BuildStatus.BUILDING && startTime != null) {
+            long elapsedSec = (System.currentTimeMillis() - startTime) / 1000;
+            buildingTime = String.format(" (%ds)", elapsedSec);
+        }
+
+        String statusStr = switch (status) {
+            case PENDING -> DIM + "⏳ PENDING" + RESET;
+            case BUILDING -> YELLOW + "🔨 BUILDING..." + buildingTime + RESET;
+            case PASSED -> GREEN + "✅ PASSED" + RESET + durationStr;
+            case FAILED -> RED + "❌ FAILED" + RESET + durationStr;
+            case IGNORED -> DIM + "⏭️  IGNORED" + RESET;
+        };
+
+        System.out.printf("    %-28s %s%n", name, statusStr);
     }
 
     private void clearOutput() {
@@ -264,46 +356,54 @@ public class AddonTester implements Callable<Integer> {
     }
 
     private int countOutputLines() {
-        // Header (4 lines) + status table + 1 empty line
-        return 5 + statusMap.size();
+        // Header (4 lines) + group headers + status table + spacing + 1 empty line
+        int lines = 5 + statusMap.size();
+        boolean hasAddons = projectTypes.values().stream().anyMatch(t -> t == ProjectType.ADDON);
+        boolean hasApps = projectTypes.values().stream().anyMatch(t -> t == ProjectType.APP);
+        if (hasAddons) lines++; // Add-ons header
+        if (hasApps) lines++; // Apps header
+        if (hasAddons && hasApps) lines++; // Spacing between groups
+        return lines;
     }
 
-    private TestResult testAddon(AddonConfig addon, Path workPath) {
+    private TestResult testProject(String name, String repoUrl, String branch, String buildSubdir,
+                                    String javaVersion, boolean useAddonsRepo, List<String> extraMvnArgs,
+                                    ProjectType type, Path workPath) {
         long startTime = System.currentTimeMillis();
-        Path addonPath = workPath.resolve(addon.name);
-        Path logFile = workPath.resolve(addon.name + "-build.log");
+        Path projectPath = workPath.resolve(name);
+        Path logFile = workPath.resolve(name + "-build.log");
 
         try {
             // Clone or update repository
-            if (!Files.exists(addonPath)) {
-                System.out.println("  " + DIM + "📥 Cloning " + addon.repoUrl + "..." + RESET);
-                int cloneResult = runCommandSilent(workPath, logFile, "git", "clone", "--depth", "1", "--single-branch", addon.repoUrl, addon.name);
+            if (!Files.exists(projectPath)) {
+                System.out.println("  " + DIM + "📥 Cloning " + repoUrl + "..." + RESET);
+                int cloneResult = runCommandSilent(workPath, logFile, "git", "clone", "--depth", "1", "--single-branch", repoUrl, name);
                 if (cloneResult != 0) {
-                    return new TestResult(addon.name, false, "Failed to clone repository", elapsed(startTime), logFile);
+                    return new TestResult(name, type, false, "Failed to clone repository", elapsed(startTime), logFile);
                 }
             } else {
                 System.out.println("  " + DIM + "🔄 Updating repository..." + RESET);
                 // Discard any local changes (e.g., from versions plugin)
-                runCommandSilent(addonPath, logFile, "git", "checkout", "--", ".");
-                runCommandSilent(addonPath, logFile, "git", "fetch", "--depth", "1");
+                runCommandSilent(projectPath, logFile, "git", "checkout", "--", ".");
+                runCommandSilent(projectPath, logFile, "git", "fetch", "--depth", "1");
                 // Get the default branch from remote
-                String defaultBranch = addon.branch != null ? addon.branch : getDefaultBranch(addonPath, logFile);
-                runCommandSilent(addonPath, logFile, "git", "reset", "--hard", "origin/" + defaultBranch);
+                String defaultBranchName = branch != null ? branch : getDefaultBranch(projectPath, logFile);
+                runCommandSilent(projectPath, logFile, "git", "reset", "--hard", "origin/" + defaultBranchName);
             }
 
             // Checkout specific branch if configured
-            if (addon.branch != null) {
-                int checkoutResult = runCommandSilent(addonPath, logFile, "git", "checkout", addon.branch);
+            if (branch != null) {
+                int checkoutResult = runCommandSilent(projectPath, logFile, "git", "checkout", branch);
                 if (checkoutResult != 0) {
-                    checkoutResult = runCommandSilent(addonPath, logFile, "git", "checkout", "-b", addon.branch, "origin/" + addon.branch);
+                    checkoutResult = runCommandSilent(projectPath, logFile, "git", "checkout", "-b", branch, "origin/" + branch);
                     if (checkoutResult != 0) {
-                        return new TestResult(addon.name, false, "Failed to checkout branch: " + addon.branch, elapsed(startTime), logFile);
+                        return new TestResult(name, type, false, "Failed to checkout branch: " + branch, elapsed(startTime), logFile);
                     }
                 }
             }
 
             // Build with specified Vaadin version
-            Path buildPath = addon.buildSubdir != null ? addonPath.resolve(addon.buildSubdir) : addonPath;
+            Path buildPath = buildSubdir != null ? projectPath.resolve(buildSubdir) : projectPath;
 
             // Update Vaadin version in pom.xml using versions plugin
             List<String> setPropertyArgs = new ArrayList<>();
@@ -313,7 +413,7 @@ public class AddonTester implements Callable<Integer> {
             setPropertyArgs.add("-DgenerateBackupPoms=false");
             setPropertyArgs.addAll(getCommonMvnArgs());
             System.out.println("  " + DIM + "$ mvn " + String.join(" ", setPropertyArgs) + RESET);
-            runMavenSilent(buildPath, logFile, addon.javaVersion, setPropertyArgs);
+            runMavenSilent(buildPath, logFile, javaVersion, setPropertyArgs);
 
             // Also try versions:set for direct vaadin-bom references
             List<String> setVersionArgs = new ArrayList<>();
@@ -323,31 +423,31 @@ public class AddonTester implements Callable<Integer> {
             setVersionArgs.add("-DgenerateBackupPoms=false");
             setVersionArgs.addAll(getCommonMvnArgs());
             System.out.println("  " + DIM + "$ mvn " + String.join(" ", setVersionArgs) + RESET);
-            runMavenSilent(buildPath, logFile, addon.javaVersion, setVersionArgs);
+            runMavenSilent(buildPath, logFile, javaVersion, setVersionArgs);
 
             // Run the actual build
             List<String> mvnArgs = new ArrayList<>();
             mvnArgs.add("clean");
             mvnArgs.add("verify");
             mvnArgs.addAll(getCommonMvnArgs());
-            if (addon.useAddonsRepo) {
+            if (useAddonsRepo) {
                 mvnArgs.add("-Pvaadin-addons"); // Enable Vaadin Directory repository
             }
-            mvnArgs.addAll(addon.extraMvnArgs);
+            mvnArgs.addAll(extraMvnArgs);
             System.out.println("  " + DIM + "$ mvn " + String.join(" ", mvnArgs) + RESET);
 
-            int buildResult = runMavenWithTail(buildPath, logFile, addon.javaVersion, mvnArgs);
+            int buildResult = runMavenWithTail(buildPath, logFile, javaVersion, mvnArgs);
 
             if (buildResult == 0) {
-                return new TestResult(addon.name, true, "Build successful", elapsed(startTime), logFile);
+                return new TestResult(name, type, true, "Build successful", elapsed(startTime), logFile);
             } else if (buildResult == -1) {
-                return new TestResult(addon.name, false, "Build timed out after " + timeoutMinutes + " min", elapsed(startTime), logFile);
+                return new TestResult(name, type, false, "Build timed out after " + timeoutMinutes + " min", elapsed(startTime), logFile);
             } else {
-                return new TestResult(addon.name, false, "Build failed (exit code: " + buildResult + ")", elapsed(startTime), logFile);
+                return new TestResult(name, type, false, "Build failed (exit code: " + buildResult + ")", elapsed(startTime), logFile);
             }
 
         } catch (Exception e) {
-            return new TestResult(addon.name, false, "Error: " + e.getMessage(), elapsed(startTime), logFile);
+            return new TestResult(name, type, false, "Error: " + e.getMessage(), elapsed(startTime), logFile);
         }
     }
 
@@ -585,34 +685,57 @@ public class AddonTester implements Callable<Integer> {
             String timestamp = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
                     .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + " UTC";
 
+            writer.write("# Vaadin Ecosystem Build Report\n\n");
             writer.write("**Vaadin Version:** `" + vaadinVersion + "`\n");
             writer.write("**Last Run:** " + timestamp + "\n");
             writer.write("**Status:** " + status + "\n\n");
 
-            writer.write("| Add-on | Status | Duration |\n");
-            writer.write("|--------|--------|----------|\n");
+            // Group by type
+            var addonResults = results.stream().filter(r -> r.type() == ProjectType.ADDON).toList();
+            var appResults = results.stream().filter(r -> r.type() == ProjectType.APP).toList();
 
-            for (TestResult result : results) {
-                String statusEmoji;
-                if (result.message().startsWith("Ignored:")) {
-                    statusEmoji = "⏭️ IGNORED";
-                } else if (result.success()) {
-                    statusEmoji = "✅ PASSED";
-                } else {
-                    statusEmoji = "❌ FAILED";
+            if (!addonResults.isEmpty()) {
+                writer.write("## 📦 Add-ons\n\n");
+                writer.write("| Project | Status | Duration |\n");
+                writer.write("|---------|--------|----------|\n");
+                for (TestResult result : addonResults) {
+                    writeResultRow(writer, result);
                 }
-                String duration = result.durationMs() > 0
-                        ? String.format("%.1fs", result.durationMs() / 1000.0)
-                        : "-";
-                writer.write("| " + result.addonName() + " | " + statusEmoji + " | " + duration + " |\n");
+                writer.write("\n");
             }
 
-            writer.write("\n**Summary:** " + results.size() + " total | ✅ " + passed + " passed | ❌ " + failed + " failed | ⏭️ " + ignored + " ignored\n");
+            if (!appResults.isEmpty()) {
+                writer.write("## 🚀 Applications\n\n");
+                writer.write("| Project | Status | Duration |\n");
+                writer.write("|---------|--------|----------|\n");
+                for (TestResult result : appResults) {
+                    writeResultRow(writer, result);
+                }
+                writer.write("\n");
+            }
+
+            writer.write("---\n");
+            writer.write("**Summary:** " + results.size() + " total | ✅ " + passed + " passed | ❌ " + failed + " failed | ⏭️ " + ignored + " ignored\n");
 
             System.out.println("📊 Report saved to: " + reportPath);
         } catch (IOException e) {
             System.err.println("⚠️  Warning: Could not write report: " + e.getMessage());
         }
+    }
+
+    private void writeResultRow(BufferedWriter writer, TestResult result) throws IOException {
+        String statusEmoji;
+        if (result.message().startsWith("Ignored:")) {
+            statusEmoji = "⏭️ IGNORED";
+        } else if (result.success()) {
+            statusEmoji = "✅ PASSED";
+        } else {
+            statusEmoji = "❌ FAILED";
+        }
+        String duration = result.durationMs() > 0
+                ? String.format("%.1fs", result.durationMs() / 1000.0)
+                : "-";
+        writer.write("| " + result.projectName() + " | " + statusEmoji + " | " + duration + " |\n");
     }
 
     public static void main(String... args) {
