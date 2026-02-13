@@ -204,12 +204,15 @@ jobs:
 
               const body = bodyParts.join('\n');
 
+              // Create version label (e.g., "vaadin-25.0-SNAPSHOT")
+              const versionLabel = `vaadin-${version}`;
+
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: title,
                 body: body,
-                labels: ['build-failure']
+                labels: ['build-failure', versionLabel]
               });
 
               console.log(`Created issue for ${project}`);
