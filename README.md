@@ -1,8 +1,8 @@
 # Vaadin Ecosystem Build
 
-[![Nightly Build](https://github.com/mstahv/vaadin-ecosystem-build/actions/workflows/test-addons.yml/badge.svg?event=schedule)](https://github.com/mstahv/vaadin-ecosystem-build/actions/workflows/test-addons.yml)
+[![Ecosystem Build](https://github.com/mstahv/vaadin-ecosystem-build/actions/workflows/ecosystem-build.yml/badge.svg?event=schedule)](https://github.com/mstahv/vaadin-ecosystem-build/actions/workflows/ecosystem-build.yml)
 
-**[View Latest Test Results](https://github.com/mstahv/vaadin-ecosystem-build/actions/workflows/test-addons.yml)** - Download `build-logs` artifact for full report (`results.md`)
+**[View Latest Test Results](https://github.com/mstahv/vaadin-ecosystem-build/actions/workflows/ecosystem-build.yml)** - Download `build-logs` artifact for full report (`results.md`)
 
 This project continuously validates that popular Vaadin add-ons and example applications build successfully against the latest Vaadin framework versions, including snapshots. It helps detect compatibility issues early, before they affect end users.
 
