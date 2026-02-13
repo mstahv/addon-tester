@@ -63,6 +63,7 @@ public class EcosystemBuild implements Callable<Integer> {
         new AddonProject() {{
             name = "maplibre";
             repoUrl = "https://github.com/parttio/maplibre";
+            branch = "v25";
         }}
     );
 
