@@ -4,6 +4,10 @@
 
 **[View Latest Test Results](https://github.com/mstahv/addon-tester/actions/workflows/test-addons.yml)** - Download `build-logs` artifact for full report (`results.md`)
 
+This project continuously validates that popular Vaadin add-ons and example applications build successfully against the latest Vaadin framework versions, including snapshots. It helps detect compatibility issues early, before they affect end users.
+
+**Want your project included?** [Create an issue](https://github.com/mstahv/addon-tester/issues/new) to propose your add-on or application for the test battery.
+
 A JBang script for testing Vaadin ecosystem projects (add-ons and applications) against different Vaadin framework versions.
 
 > **Security Warning:** This tool clones and builds external repositories, executing Maven plugins and code without verification. Run this only in an isolated environment such as a container, VM, or CI runner. Never run on a machine with sensitive data or credentials.
@@ -21,13 +25,13 @@ A JBang script for testing Vaadin ecosystem projects (add-ons and applications) 
 Run the script directly with JBang:
 
 ```bash
-./AddonTester.java
+./EcosystemBuild.java
 ```
 
 Or explicitly with JBang:
 
 ```bash
-jbang AddonTester.java
+jbang EcosystemBuild.java
 ```
 
 ### Options
@@ -48,32 +52,32 @@ jbang AddonTester.java
 
 Test against the default Vaadin version:
 ```bash
-./AddonTester.java
+./EcosystemBuild.java
 ```
 
 Test against a specific Vaadin version:
 ```bash
-./AddonTester.java -v 24.6.0
+./EcosystemBuild.java -v 24.6.0
 ```
 
 Clean the work directory and run fresh:
 ```bash
-./AddonTester.java --clean -v 25.0.5
+./EcosystemBuild.java --clean -v 25.0.5
 ```
 
 Test only specific projects:
 ```bash
-./AddonTester.java -p hugerte-for-flow,super-fields
+./EcosystemBuild.java -p hugerte-for-flow,super-fields
 ```
 
 Run builds in parallel (4 concurrent jobs):
 ```bash
-./AddonTester.java -j 4
+./EcosystemBuild.java -j 4
 ```
 
 ## Adding Projects
 
-Edit `AddonTester.java` to configure which projects to test. Projects are organized by type:
+Edit `EcosystemBuild.java` to configure which projects to test. Projects are organized by type:
 
 ### Add-ons
 
@@ -131,10 +135,10 @@ This allows testing projects against unreleased Vaadin versions:
 
 ```bash
 # Test against a beta version
-./AddonTester.java -v 25.1.0.beta1
+./EcosystemBuild.java -v 25.1.0.beta1
 
 # Test against a snapshot
-./AddonTester.java -v 25.1-SNAPSHOT
+./EcosystemBuild.java -v 25.1-SNAPSHOT
 ```
 
 ## GitHub Actions
@@ -149,7 +153,7 @@ The repository includes a GitHub Actions workflow with:
 
 ### Manual Runs
 1. Go to **Actions** tab in GitHub
-2. Select **Test Add-ons** workflow
+2. Select **Ecosystem Build** workflow
 3. Click **Run workflow**
 4. Optionally specify a Vaadin version (defaults to latest stable)
 5. Build logs are uploaded as artifacts for inspection

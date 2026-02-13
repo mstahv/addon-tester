@@ -1,4 +1,4 @@
-name: Test Add-ons
+name: Ecosystem Build
 
 on:
   schedule:
@@ -45,7 +45,7 @@ jobs:
           curl -s "https://get.sdkman.io" | bash
           echo "SDKMAN_DIR=$HOME/.sdkman" >> $GITHUB_ENV
 
-      - name: Run Add-on Tests
+      - name: Run Ecosystem Build
         id: test
         continue-on-error: true
         run: |
@@ -61,9 +61,9 @@ jobs:
           echo "vaadin_version=$VERSION" >> $GITHUB_OUTPUT
 
           if [ -n "$VERSION" ]; then
-            jbang AddonTester.java -q -t 5 -v "$VERSION" 2>&1 | tee test-output.txt
+            jbang EcosystemBuild.java -q -t 5 -j 2 -v "$VERSION" 2>&1 | tee test-output.txt
           else
-            jbang AddonTester.java -q -t 5 2>&1 | tee test-output.txt
+            jbang EcosystemBuild.java -q -t 5 -j 2 2>&1 | tee test-output.txt
           fi
 
           # Capture exit code

@@ -17,7 +17,7 @@ import java.util.regex.*;
 
 @Command(name = "ecosystem-build", mixinStandardHelpOptions = true, version = "1.0",
         description = "Tests Vaadin ecosystem projects against framework version changes")
-public class AddonTester implements Callable<Integer> {
+public class EcosystemBuild implements Callable<Integer> {
 
     // ANSI color codes
     private static final String RED = "\u001B[31m";
@@ -93,7 +93,7 @@ public class AddonTester implements Callable<Integer> {
     }
 
     // Build status for display
-    enum BuildStatus { PENDING, WAITING, BUILDING, PASSED, FAILED, IGNORED }
+    enum BuildStatus { PENDING, WAITING, BUILDING, PASSED, FAILED, KNOWN_ISSUE, IGNORED }
 
     // Configure add-ons to test here
     private static final List<AddonProject> ADDONS = List.of(
@@ -275,15 +275,26 @@ public class AddonTester implements Callable<Integer> {
                 results.add(result);
 
                 durationMap.put(task.name, result.durationMs());
-                statusMap.put(task.name, result.success() ? BuildStatus.PASSED : BuildStatus.FAILED);
+                BuildStatus finalStatus;
+                if (result.success()) {
+                    finalStatus = BuildStatus.PASSED;
+                } else if (hasOpenGitHubIssue(task.name)) {
+                    finalStatus = BuildStatus.KNOWN_ISSUE;
+                } else {
+                    finalStatus = BuildStatus.FAILED;
+                }
+                statusMap.put(task.name, finalStatus);
 
                 clearOutput();
                 printHeader();
                 printStatusTable();
 
-                if (!result.success()) {
+                if (finalStatus == BuildStatus.FAILED) {
                     System.out.println();
                     System.out.printf("  %s💥 %s failed. Log: %s%s%n", RED, task.name, result.logFile(), RESET);
+                } else if (finalStatus == BuildStatus.KNOWN_ISSUE) {
+                    System.out.println();
+                    System.out.printf("  %s⚠️  %s failed (known issue). Log: %s%s%n", YELLOW, task.name, result.logFile(), RESET);
                 }
                 System.out.println();
             }
@@ -339,7 +350,15 @@ public class AddonTester implements Callable<Integer> {
 
                     synchronized (slotsLock) {
                         durationMap.put(task.name, result.durationMs());
-                        statusMap.put(task.name, result.success() ? BuildStatus.PASSED : BuildStatus.FAILED);
+                        BuildStatus finalStatus;
+                        if (result.success()) {
+                            finalStatus = BuildStatus.PASSED;
+                        } else if (hasOpenGitHubIssue(task.name)) {
+                            finalStatus = BuildStatus.KNOWN_ISSUE;
+                        } else {
+                            finalStatus = BuildStatus.FAILED;
+                        }
+                        statusMap.put(task.name, finalStatus);
                         builderSlots[slot] = null;
                     }
 
@@ -412,11 +431,17 @@ public class AddonTester implements Callable<Integer> {
             printHeader();
             printStatusTable();
 
-            // Show failures
+            // Show failures and known issues
             for (TestResult result : results) {
                 if (!result.success() && !result.message().startsWith("Ignored:")) {
-                    System.out.println();
-                    System.out.printf("  %s💥 %s failed. Log: %s%s%n", RED, result.projectName(), result.logFile(), RESET);
+                    BuildStatus status = statusMap.get(result.projectName());
+                    if (status == BuildStatus.KNOWN_ISSUE) {
+                        System.out.println();
+                        System.out.printf("  %s⚠️  %s failed (known issue). Log: %s%s%n", YELLOW, result.projectName(), result.logFile(), RESET);
+                    } else {
+                        System.out.println();
+                        System.out.printf("  %s💥 %s failed. Log: %s%s%n", RED, result.projectName(), result.logFile(), RESET);
+                    }
                 }
             }
             System.out.println();
@@ -426,9 +451,9 @@ public class AddonTester implements Callable<Integer> {
         long totalTimeMs = System.currentTimeMillis() - buildStartTime;
         printFinalSummary(results, totalTimeMs);
 
-        boolean allPassed = results.stream()
-                .filter(r -> !r.message().startsWith("Ignored:"))
-                .allMatch(TestResult::success);
+        // Count failures (known issues don't count as failures)
+        boolean allPassed = statusMap.values().stream()
+                .noneMatch(s -> s == BuildStatus.FAILED);
         return allPassed ? 0 : 1;
     }
 
@@ -481,6 +506,7 @@ public class AddonTester implements Callable<Integer> {
             case BUILDING -> YELLOW + "🔨 BUILDING..." + buildingTime + RESET;
             case PASSED -> GREEN + "✅ PASSED" + RESET + durationStr;
             case FAILED -> RED + "❌ FAILED" + RESET + durationStr;
+            case KNOWN_ISSUE -> YELLOW + "⚠️  KNOWN ISSUE" + RESET + durationStr;
             case IGNORED -> DIM + "⏭️  IGNORED" + RESET;
         };
 
@@ -748,6 +774,35 @@ public class AddonTester implements Callable<Integer> {
         return "main"; // Default fallback
     }
 
+    private boolean hasOpenGitHubIssue(String projectName) {
+        try {
+            // Use gh CLI to check for open issues containing the project name
+            ProcessBuilder pb = new ProcessBuilder(
+                    "gh", "issue", "list",
+                    "--repo", "mstahv/addon-tester",
+                    "--state", "open",
+                    "--search", projectName,
+                    "--json", "number",
+                    "--limit", "1"
+            );
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            String output;
+            try (var reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                output = reader.lines().collect(java.util.stream.Collectors.joining());
+            }
+
+            if (process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0) {
+                // If output contains at least one issue (not empty array "[]")
+                return output != null && !output.trim().equals("[]");
+            }
+        } catch (Exception e) {
+            // gh CLI not available or error - assume no known issue
+        }
+        return false;
+    }
+
     private int runCommandSilent(Path workDir, Path logFile, String... command) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(workDir.toFile());
@@ -931,30 +986,39 @@ public class AddonTester implements Callable<Integer> {
         System.out.println("📁 Build logs saved to: " + workDir + "/");
         System.out.println();
 
-        int passed = 0, failed = 0, ignored = 0;
+        int passed = 0, failed = 0, knownIssues = 0, ignored = 0;
         for (TestResult result : results) {
             if (result.message().startsWith("Ignored:")) {
                 ignored++;
             } else if (result.success()) {
                 passed++;
             } else {
-                failed++;
+                // Check if this is a known issue
+                BuildStatus status = statusMap.get(result.projectName());
+                if (status == BuildStatus.KNOWN_ISSUE) {
+                    knownIssues++;
+                } else {
+                    failed++;
+                }
             }
         }
 
         String totalTimeStr = formatDuration(totalTimeMs);
         String summaryIcon = failed == 0 ? "🎉" : "💔";
-        System.out.printf("%s Total: %d | %s✅ Passed: %d%s | %s❌ Failed: %d%s | ⏭️  Ignored: %d%n",
-                summaryIcon,
-                results.size(),
-                GREEN, passed, RESET,
-                failed > 0 ? RED : "", failed, failed > 0 ? RESET : "",
-                ignored);
+        StringBuilder summary = new StringBuilder();
+        summary.append(String.format("%s Total: %d | %s✅ Passed: %d%s",
+                summaryIcon, results.size(), GREEN, passed, RESET));
+        if (knownIssues > 0) {
+            summary.append(String.format(" | %s⚠️  Known issues: %d%s", YELLOW, knownIssues, RESET));
+        }
+        summary.append(String.format(" | %s❌ Failed: %d%s | ⏭️  Ignored: %d",
+                failed > 0 ? RED : "", failed, failed > 0 ? RESET : "", ignored));
+        System.out.println(summary);
         System.out.println("⏱️  Total time: " + totalTimeStr);
         System.out.println("=".repeat(60));
 
         // Write markdown report
-        writeMarkdownReport(results, passed, failed, ignored, totalTimeMs);
+        writeMarkdownReport(results, passed, failed, knownIssues, ignored, totalTimeMs);
     }
 
     private String formatDuration(long ms) {
@@ -972,10 +1036,17 @@ public class AddonTester implements Callable<Integer> {
         return String.format("%dh %dm %ds", hours, minutes, seconds);
     }
 
-    private void writeMarkdownReport(List<TestResult> results, int passed, int failed, int ignored, long totalTimeMs) {
+    private void writeMarkdownReport(List<TestResult> results, int passed, int failed, int knownIssues, int ignored, long totalTimeMs) {
         Path reportPath = Path.of(workDir, "results.md");
         try (BufferedWriter writer = Files.newBufferedWriter(reportPath)) {
-            String status = failed == 0 ? "🎉 All tests passed" : "💔 Some tests failed";
+            String status;
+            if (failed == 0 && knownIssues == 0) {
+                status = "🎉 All tests passed";
+            } else if (failed == 0) {
+                status = "⚠️ All tests passed (with known issues)";
+            } else {
+                status = "💔 Some tests failed";
+            }
             String timestamp = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
                     .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + " UTC";
 
@@ -1021,7 +1092,15 @@ public class AddonTester implements Callable<Integer> {
             }
 
             writer.write("---\n");
-            writer.write("**Summary:** " + results.size() + " total | ✅ " + passed + " passed | ❌ " + failed + " failed | ⏭️ " + ignored + " ignored\n");
+            StringBuilder summary = new StringBuilder();
+            summary.append("**Summary:** ").append(results.size()).append(" total");
+            summary.append(" | ✅ ").append(passed).append(" passed");
+            if (knownIssues > 0) {
+                summary.append(" | ⚠️ ").append(knownIssues).append(" known issues");
+            }
+            summary.append(" | ❌ ").append(failed).append(" failed");
+            summary.append(" | ⏭️ ").append(ignored).append(" ignored\n");
+            writer.write(summary.toString());
 
             System.out.println("📊 Report saved to: " + reportPath);
         } catch (IOException e) {
@@ -1036,7 +1115,13 @@ public class AddonTester implements Callable<Integer> {
         } else if (result.success()) {
             statusEmoji = "✅ PASSED";
         } else {
-            statusEmoji = "❌ FAILED";
+            // Check if this is a known issue
+            BuildStatus status = statusMap.get(result.projectName());
+            if (status == BuildStatus.KNOWN_ISSUE) {
+                statusEmoji = "⚠️ KNOWN ISSUE";
+            } else {
+                statusEmoji = "❌ FAILED";
+            }
         }
         String duration = result.durationMs() > 0
                 ? String.format("%.1fs", result.durationMs() / 1000.0)
@@ -1045,7 +1130,7 @@ public class AddonTester implements Callable<Integer> {
     }
 
     public static void main(String... args) {
-        int exitCode = new CommandLine(new AddonTester()).execute(args);
+        int exitCode = new CommandLine(new EcosystemBuild()).execute(args);
         System.exit(exitCode);
     }
 }
