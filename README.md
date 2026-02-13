@@ -14,6 +14,18 @@ This project continuously validates that Vaadin add-ons and applications build s
 - **Help Vaadin**: Your real-world usage patterns help catch edge cases that unit tests miss
 - **Stay compatible**: Automatic testing against snapshots means fewer surprises when updating
 
+### What We Test
+
+Even just verifying that your project **compiles** against new Vaadin versions is valuable. But it's even better if your project has actual tests that run during `mvn verify`:
+
+- **Unit tests** - Basic component and logic testing
+- **Integration tests** - Spring context, database, etc.
+- **E2E tests** - Selenium, TestBench, Playwright, or similar
+
+Tests run on a dedicated GitHub Actions runner with plenty of resources (we can add more if needed). A reasonable build time is a few minutes per project. If your project needs custom Maven flags or profiles, we can configure that.
+
+This is currently an unofficial proof-of-concept by [@mstahv](https://github.com/mstahv), but the plan is to make this an official tool maintained by the Vaadin team in the future.
+
 [Create an issue](https://github.com/mstahv/vaadin-ecosystem-build/issues/new) to propose your add-on or application. Both public add-ons and example applications are welcome.
 
 ## About
