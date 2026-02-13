@@ -62,6 +62,11 @@ public class EcosystemBuild implements Callable<Integer> {
             name = "maplibre";
             repoUrl = "https://github.com/parttio/maplibre";
             branch = "v25";
+        }},
+        new AddonProject() {{
+            name = "SimpleTimeline";
+            repoUrl = "https://github.com/samie/SimpleTimeline";
+            notifyUsers = List.of("samie");
         }}
     );
 
@@ -126,6 +131,7 @@ public class EcosystemBuild implements Callable<Integer> {
         String javaVersion;      // SDKMAN Java version (e.g., "21-tem")
         boolean useAddonsRepo;   // Enable Vaadin Directory repository
         List<String> extraMvnArgs = List.of();
+        List<String> notifyUsers = List.of();  // GitHub usernames to mention in issues
         boolean ignored;
         String ignoreReason;
     }
@@ -139,6 +145,7 @@ public class EcosystemBuild implements Callable<Integer> {
         String javaVersion;
         boolean useAddonsRepo;
         List<String> extraMvnArgs = List.of();
+        List<String> notifyUsers = List.of();  // GitHub usernames to mention in issues
         boolean ignored;
         String ignoreReason;
     }
@@ -154,7 +161,7 @@ public class EcosystemBuild implements Callable<Integer> {
     enum BuildStatus { PENDING, WAITING, BUILDING, PASSED, FAILED, KNOWN_ISSUE, IGNORED }
 
     // Metadata about a failed build - used to provide context in GitHub issues
-    record FailureMetadata(String repoUrl, String originalVersion, boolean buildsWithOriginal) {}
+    record FailureMetadata(String repoUrl, String originalVersion, boolean buildsWithOriginal, List<String> notifyUsers) {}
 
     private final Map<String, BuildStatus> statusMap = new LinkedHashMap<>();
     private final Map<String, ProjectType> projectTypes = new HashMap<>();
@@ -255,17 +262,17 @@ public class EcosystemBuild implements Callable<Integer> {
         // Collect all projects to build
         record BuildTask(String name, String repoUrl, String branch, String buildSubdir,
                          String javaVersion, boolean useAddonsRepo, List<String> extraMvnArgs,
-                         ProjectType type, boolean ignored, String ignoreReason) {}
+                         List<String> notifyUsers, ProjectType type, boolean ignored, String ignoreReason) {}
 
         List<BuildTask> allTasks = new ArrayList<>();
         for (AddonProject addon : addonsToTest) {
             allTasks.add(new BuildTask(addon.name, addon.repoUrl, addon.branch, addon.buildSubdir,
-                    addon.javaVersion, addon.useAddonsRepo, addon.extraMvnArgs,
+                    addon.javaVersion, addon.useAddonsRepo, addon.extraMvnArgs, addon.notifyUsers,
                     ProjectType.ADDON, addon.ignored, addon.ignoreReason));
         }
         for (AppProject app : appsToTest) {
             allTasks.add(new BuildTask(app.name, app.repoUrl, app.branch, app.buildSubdir,
-                    app.javaVersion, app.useAddonsRepo, app.extraMvnArgs,
+                    app.javaVersion, app.useAddonsRepo, app.extraMvnArgs, app.notifyUsers,
                     ProjectType.APP, app.ignored, app.ignoreReason));
         }
 
@@ -312,7 +319,7 @@ public class EcosystemBuild implements Callable<Integer> {
                     boolean buildsWithOriginal = verifyWithOriginalVersion(buildPath, task.javaVersion,
                             task.useAddonsRepo, task.extraMvnArgs, verifyLog);
 
-                    failureMetadata.put(task.name, new FailureMetadata(task.repoUrl, originalVersion, buildsWithOriginal));
+                    failureMetadata.put(task.name, new FailureMetadata(task.repoUrl, originalVersion, buildsWithOriginal, task.notifyUsers));
 
                     if (originalVersion != null) {
                         System.out.printf("  %s   Original version: %s, builds: %s%s%n", DIM, originalVersion,
@@ -393,7 +400,7 @@ public class EcosystemBuild implements Callable<Integer> {
                         Path verifyLog = versionOutputPath.resolve(task.name + "-original-build.log");
                         boolean buildsWithOriginal = verifyWithOriginalVersion(buildPath, task.javaVersion,
                                 task.useAddonsRepo, task.extraMvnArgs, verifyLog);
-                        metadata = new FailureMetadata(task.repoUrl, originalVersion, buildsWithOriginal);
+                        metadata = new FailureMetadata(task.repoUrl, originalVersion, buildsWithOriginal, task.notifyUsers);
                     }
 
                     synchronized (slotsLock) {
@@ -1294,10 +1301,12 @@ public class EcosystemBuild implements Callable<Integer> {
                     String repoUrl = entry.getValue().repoUrl();
                     String originalVersion = entry.getValue().originalVersion();
                     boolean builds = entry.getValue().buildsWithOriginal();
+                    List<String> notifyUsers = entry.getValue().notifyUsers();
                     writer.write("  \"" + entry.getKey() + "\": {\n");
                     writer.write("    \"repoUrl\": " + (repoUrl != null ? "\"" + repoUrl + "\"" : "null") + ",\n");
                     writer.write("    \"originalVersion\": " + (originalVersion != null ? "\"" + originalVersion + "\"" : "null") + ",\n");
-                    writer.write("    \"buildsWithOriginal\": " + builds + "\n");
+                    writer.write("    \"buildsWithOriginal\": " + builds + ",\n");
+                    writer.write("    \"notifyUsers\": [" + notifyUsers.stream().map(u -> "\"" + u + "\"").collect(java.util.stream.Collectors.joining(", ")) + "]\n");
                     writer.write("  }" + (i < entries.size() - 1 ? "," : "") + "\n");
                 }
                 writer.write("}\n");

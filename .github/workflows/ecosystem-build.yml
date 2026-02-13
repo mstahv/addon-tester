@@ -202,6 +202,13 @@ jobs:
               bodyParts.push('');
               bodyParts.push('Please check the build logs for details.');
 
+              // Add mentions for users who want to be notified
+              if (metadata?.notifyUsers && metadata.notifyUsers.length > 0) {
+                bodyParts.push('');
+                bodyParts.push('---');
+                bodyParts.push('cc: ' + metadata.notifyUsers.map(u => `@${u}`).join(' '));
+              }
+
               const body = bodyParts.join('\n');
 
               // Create version label (e.g., "vaadin-25.0-SNAPSHOT")
