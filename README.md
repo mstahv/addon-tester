@@ -142,7 +142,8 @@ This allows testing projects against unreleased Vaadin versions:
 The repository includes a GitHub Actions workflow with:
 
 ### Scheduled Runs
-- Runs daily at 6:00 UTC against Vaadin `25.0-SNAPSHOT`
+- Runs hourly against Vaadin `25.0-SNAPSHOT` on self-hosted runner
+- Work directory preserved between runs for faster incremental builds
 - Creates a GitHub issue with `build-failure` label if the build fails
 - Watch the repository to get notified of new issues
 

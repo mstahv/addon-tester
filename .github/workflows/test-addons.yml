@@ -2,8 +2,8 @@ name: Test Add-ons
 
 on:
   schedule:
-    # Run daily at 6:00 UTC
-    - cron: '0 6 * * *'
+    # Run hourly against snapshots
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       vaadin_version:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       # Read repo contents to checkout
       contents: read
@@ -85,7 +85,7 @@ jobs:
         with:
           script: |
             const title = `Scheduled build failed for Vaadin ${process.env.SCHEDULED_VERSION}`;
-            const body = `The daily scheduled add-on compatibility test failed.
+            const body = `The hourly scheduled add-on compatibility test failed.
 
             **Vaadin Version:** ${process.env.SCHEDULED_VERSION}
             **Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
