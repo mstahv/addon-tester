@@ -152,6 +152,7 @@ public class EcosystemBuild implements Callable<Integer> {
     private final Map<String, ProjectType> projectTypes = new HashMap<>();
     private final Map<String, Long> durationMap = new HashMap<>();
     private final Map<String, Long> buildStartTimeMap = new HashMap<>();
+    private final Map<String, String> knownIssueUrls = new HashMap<>();  // Project -> GitHub issue URL
     private int lastOutputLines = 0;
 
     @Override
@@ -283,10 +284,14 @@ public class EcosystemBuild implements Callable<Integer> {
                 BuildStatus finalStatus;
                 if (result.success()) {
                     finalStatus = BuildStatus.PASSED;
-                } else if (hasOpenGitHubIssue(task.name, vaadinVersion)) {
-                    finalStatus = BuildStatus.KNOWN_ISSUE;
                 } else {
-                    finalStatus = BuildStatus.FAILED;
+                    String issueUrl = findOpenGitHubIssue(task.name, vaadinVersion);
+                    if (issueUrl != null) {
+                        finalStatus = BuildStatus.KNOWN_ISSUE;
+                        knownIssueUrls.put(task.name, issueUrl);
+                    } else {
+                        finalStatus = BuildStatus.FAILED;
+                    }
                 }
                 statusMap.put(task.name, finalStatus);
 
@@ -358,10 +363,14 @@ public class EcosystemBuild implements Callable<Integer> {
                         BuildStatus finalStatus;
                         if (result.success()) {
                             finalStatus = BuildStatus.PASSED;
-                        } else if (hasOpenGitHubIssue(task.name, vaadinVersion)) {
-                            finalStatus = BuildStatus.KNOWN_ISSUE;
                         } else {
-                            finalStatus = BuildStatus.FAILED;
+                            String issueUrl = findOpenGitHubIssue(task.name, vaadinVersion);
+                            if (issueUrl != null) {
+                                finalStatus = BuildStatus.KNOWN_ISSUE;
+                                knownIssueUrls.put(task.name, issueUrl);
+                            } else {
+                                finalStatus = BuildStatus.FAILED;
+                            }
                         }
                         statusMap.put(task.name, finalStatus);
                         builderSlots[slot] = null;
@@ -782,7 +791,11 @@ public class EcosystemBuild implements Callable<Integer> {
         return "main"; // Default fallback
     }
 
-    private boolean hasOpenGitHubIssue(String projectName, String version) {
+    /**
+     * Check if there's an open GitHub issue for this project and version.
+     * @return The issue URL if found, null otherwise
+     */
+    private String findOpenGitHubIssue(String projectName, String version) {
         try {
             // Use gh CLI to check for open issues containing both project name and version
             // Search query: project name AND version (e.g., "super-fields 25.0-SNAPSHOT")
@@ -792,7 +805,7 @@ public class EcosystemBuild implements Callable<Integer> {
                     "--repo", "mstahv/vaadin-ecosystem-build",
                     "--state", "open",
                     "--search", searchQuery,
-                    "--json", "number",
+                    "--json", "number,url",
                     "--limit", "1"
             );
             pb.redirectErrorStream(true);
@@ -804,13 +817,19 @@ public class EcosystemBuild implements Callable<Integer> {
             }
 
             if (process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0) {
-                // If output contains at least one issue (not empty array "[]")
-                return output != null && !output.trim().equals("[]");
+                // Parse JSON to extract URL: [{"number":1,"url":"https://..."}]
+                if (output != null && !output.trim().equals("[]")) {
+                    // Simple JSON parsing - extract URL
+                    var urlMatch = Pattern.compile("\"url\":\"([^\"]+)\"").matcher(output);
+                    if (urlMatch.find()) {
+                        return urlMatch.group(1);
+                    }
+                }
             }
         } catch (Exception e) {
             // gh CLI not available or error - assume no known issue
         }
-        return false;
+        return null;
     }
 
     private int runCommandSilent(Path workDir, Path logFile, String... command) throws IOException, InterruptedException {
@@ -1128,7 +1147,12 @@ public class EcosystemBuild implements Callable<Integer> {
             // Check if this is a known issue
             BuildStatus status = statusMap.get(result.projectName());
             if (status == BuildStatus.KNOWN_ISSUE) {
-                statusEmoji = "⚠️ KNOWN ISSUE";
+                String issueUrl = knownIssueUrls.get(result.projectName());
+                if (issueUrl != null) {
+                    statusEmoji = "[⚠️ KNOWN ISSUE](" + issueUrl + ")";
+                } else {
+                    statusEmoji = "⚠️ KNOWN ISSUE";
+                }
             } else {
                 statusEmoji = "❌ FAILED";
             }
