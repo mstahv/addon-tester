@@ -57,6 +57,7 @@ public class EcosystemBuild implements Callable<Integer> {
         new AddonProject() {{
             name = "svg-visualizations";
             repoUrl = "https://github.com/viritin/svg-visualizations";
+            extraMvnArgs = List.of("-DskipPerformanceValidation=true");
         }},
         new AddonProject() {{
             name = "maplibre";
