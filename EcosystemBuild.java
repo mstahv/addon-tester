@@ -23,10 +23,17 @@ public class EcosystemBuild implements Callable<Integer> {
     // PROJECT CONFIGURATION - Edit these lists to add/remove projects
     // ============================================================
 
+    // Default version overrides applied to all projects (unless they specify their own)
+    // Projects can override by specifying their own versionOverrides for the same pattern
+    private static final Map<String, VersionConfig> DEFAULT_VERSION_OVERRIDES = Map.of(
+        "24.*", new VersionConfig() {{ ignored = true; ignoreReason = "v24 testing limited to selected projects"; }}
+    );
+
     private static final List<AddonProject> ADDONS = List.of(
         new AddonProject() {{
             name = "hugerte-for-flow";
             repoUrl = "https://github.com/parttio/hugerte-for-flow";
+            versionOverrides = Map.of("24.*", new VersionConfig() {{ branch = "v1"; }});
         }},
         new AddonProject() {{
             name = "super-fields";
@@ -62,12 +69,16 @@ public class EcosystemBuild implements Callable<Integer> {
         new AddonProject() {{
             name = "maplibre";
             repoUrl = "https://github.com/parttio/maplibre";
-            branch = "v25";
+            versionOverrides = Map.of(
+                "25.*", new VersionConfig() {{ branch = "v25"; }},
+                "24.*", new VersionConfig() {{ branch = "v24"; }}
+            );
         }},
         new AddonProject() {{
             name = "SimpleTimeline";
             repoUrl = "https://github.com/samie/SimpleTimeline";
             notifyUsers = List.of("samie");
+            versionOverrides = Map.of("24.*", new VersionConfig());  // Override default: use defaults for 24.*
         }}
     );
 
@@ -75,6 +86,11 @@ public class EcosystemBuild implements Callable<Integer> {
         new AppProject() {{
             name = "spring-boot-spatial-example";
             repoUrl = "https://github.com/mstahv/spring-boot-spatial-example";
+        }},
+        new AppProject() {{
+            name = "xsd-validator-ui";
+            repoUrl = "https://github.com/rucko24/xsd-validator-ui";
+            notifyUsers = List.of("rucko24");
         }}
     );
 
@@ -123,6 +139,15 @@ public class EcosystemBuild implements Callable<Integer> {
     // Project types
     enum ProjectType { SMOKE_TEST, ADDON, APP }
 
+    // Version-specific configuration overrides
+    static class VersionConfig {
+        String branch;           // Override branch for this version range
+        String javaVersion;      // Override Java version (SDKMAN identifier)
+        boolean ignored;         // Skip project for this version range
+        String ignoreReason;     // Reason for skipping
+        List<String> extraMvnArgs; // Override Maven args (null = use default)
+    }
+
     // Project configuration
     static class AddonProject {
         String name;
@@ -135,6 +160,7 @@ public class EcosystemBuild implements Callable<Integer> {
         List<String> notifyUsers = List.of();  // GitHub usernames to mention in issues
         boolean ignored;
         String ignoreReason;
+        Map<String, VersionConfig> versionOverrides = Map.of();  // Version pattern -> config
     }
 
     // App project configuration
@@ -149,6 +175,7 @@ public class EcosystemBuild implements Callable<Integer> {
         List<String> notifyUsers = List.of();  // GitHub usernames to mention in issues
         boolean ignored;
         String ignoreReason;
+        Map<String, VersionConfig> versionOverrides = Map.of();  // Version pattern -> config
     }
 
     // Test result
@@ -241,13 +268,17 @@ public class EcosystemBuild implements Callable<Integer> {
             }
         }
 
-        // Initialize status map with project types
+        // Initialize status map with project types (applying version-specific ignore status)
         for (AddonProject addon : addonsToTest) {
-            statusMap.put(addon.name, addon.ignored ? BuildStatus.IGNORED : BuildStatus.PENDING);
+            VersionConfig vc = findVersionConfig(addon.versionOverrides, vaadinVersion);
+            boolean ignored = (vc != null && vc.ignored) || addon.ignored;
+            statusMap.put(addon.name, ignored ? BuildStatus.IGNORED : BuildStatus.PENDING);
             projectTypes.put(addon.name, ProjectType.ADDON);
         }
         for (AppProject app : appsToTest) {
-            statusMap.put(app.name, app.ignored ? BuildStatus.IGNORED : BuildStatus.PENDING);
+            VersionConfig vc = findVersionConfig(app.versionOverrides, vaadinVersion);
+            boolean ignored = (vc != null && vc.ignored) || app.ignored;
+            statusMap.put(app.name, ignored ? BuildStatus.IGNORED : BuildStatus.PENDING);
             projectTypes.put(app.name, ProjectType.APP);
         }
 
@@ -267,14 +298,30 @@ public class EcosystemBuild implements Callable<Integer> {
 
         List<BuildTask> allTasks = new ArrayList<>();
         for (AddonProject addon : addonsToTest) {
-            allTasks.add(new BuildTask(addon.name, addon.repoUrl, addon.branch, addon.buildSubdir,
-                    addon.javaVersion, addon.useAddonsRepo, addon.extraMvnArgs, addon.notifyUsers,
-                    ProjectType.ADDON, addon.ignored, addon.ignoreReason));
+            // Apply version-specific overrides if any
+            VersionConfig vc = findVersionConfig(addon.versionOverrides, vaadinVersion);
+            String branch = (vc != null && vc.branch != null) ? vc.branch : addon.branch;
+            String javaVersion = (vc != null && vc.javaVersion != null) ? vc.javaVersion : addon.javaVersion;
+            List<String> extraMvnArgs = (vc != null && vc.extraMvnArgs != null) ? vc.extraMvnArgs : addon.extraMvnArgs;
+            boolean ignored = (vc != null && vc.ignored) || addon.ignored;
+            String ignoreReason = (vc != null && vc.ignored) ? vc.ignoreReason : addon.ignoreReason;
+
+            allTasks.add(new BuildTask(addon.name, addon.repoUrl, branch, addon.buildSubdir,
+                    javaVersion, addon.useAddonsRepo, extraMvnArgs, addon.notifyUsers,
+                    ProjectType.ADDON, ignored, ignoreReason));
         }
         for (AppProject app : appsToTest) {
-            allTasks.add(new BuildTask(app.name, app.repoUrl, app.branch, app.buildSubdir,
-                    app.javaVersion, app.useAddonsRepo, app.extraMvnArgs, app.notifyUsers,
-                    ProjectType.APP, app.ignored, app.ignoreReason));
+            // Apply version-specific overrides if any
+            VersionConfig vc = findVersionConfig(app.versionOverrides, vaadinVersion);
+            String branch = (vc != null && vc.branch != null) ? vc.branch : app.branch;
+            String javaVersion = (vc != null && vc.javaVersion != null) ? vc.javaVersion : app.javaVersion;
+            List<String> extraMvnArgs = (vc != null && vc.extraMvnArgs != null) ? vc.extraMvnArgs : app.extraMvnArgs;
+            boolean ignored = (vc != null && vc.ignored) || app.ignored;
+            String ignoreReason = (vc != null && vc.ignored) ? vc.ignoreReason : app.ignoreReason;
+
+            allTasks.add(new BuildTask(app.name, app.repoUrl, branch, app.buildSubdir,
+                    javaVersion, app.useAddonsRepo, extraMvnArgs, app.notifyUsers,
+                    ProjectType.APP, ignored, ignoreReason));
         }
 
         if (buildThreads == 1) {
@@ -1333,6 +1380,77 @@ public class EcosystemBuild implements Callable<Integer> {
                 System.err.println("⚠️  Warning: Could not write failure metadata: " + e.getMessage());
             }
         }
+    }
+
+    // Version matching for version-specific configuration
+    private boolean matchesVersion(String pattern, String version) {
+        if (pattern == null || version == null) return false;
+
+        // Exact match
+        if (pattern.equals(version)) return true;
+
+        // Wildcard match (25.* matches 25.0.0, 25.1-SNAPSHOT, etc.)
+        if (pattern.endsWith("*")) {
+            String prefix = pattern.substring(0, pattern.length() - 1);
+            return version.startsWith(prefix);
+        }
+
+        // Comparison operators (>=, <=, >, <)
+        if (pattern.startsWith(">=")) {
+            return compareVersions(version, pattern.substring(2)) >= 0;
+        } else if (pattern.startsWith("<=")) {
+            return compareVersions(version, pattern.substring(2)) <= 0;
+        } else if (pattern.startsWith(">")) {
+            return compareVersions(version, pattern.substring(1)) > 0;
+        } else if (pattern.startsWith("<")) {
+            return compareVersions(version, pattern.substring(1)) < 0;
+        }
+
+        return false;
+    }
+
+    // Compare two version strings (major.minor comparison)
+    // Returns negative if v1 < v2, 0 if equal, positive if v1 > v2
+    private int compareVersions(String v1, String v2) {
+        // Extract major.minor from version strings (e.g., "25.0-SNAPSHOT" -> [25, 0])
+        int[] parts1 = extractMajorMinor(v1);
+        int[] parts2 = extractMajorMinor(v2);
+
+        if (parts1[0] != parts2[0]) {
+            return parts1[0] - parts2[0];
+        }
+        return parts1[1] - parts2[1];
+    }
+
+    private int[] extractMajorMinor(String version) {
+        // Remove -SNAPSHOT, -beta, etc. suffix for comparison
+        String clean = version.replaceAll("-.*", "");
+        String[] parts = clean.split("\\.");
+        int major = parts.length > 0 ? Integer.parseInt(parts[0]) : 0;
+        int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+        return new int[] { major, minor };
+    }
+
+    // Find matching VersionConfig for a project and Vaadin version
+    // Checks project-specific overrides first, then falls back to DEFAULT_VERSION_OVERRIDES
+    private VersionConfig findVersionConfig(Map<String, VersionConfig> overrides, String vaadinVersion) {
+        // First check project-specific overrides
+        if (overrides != null && !overrides.isEmpty()) {
+            for (var entry : overrides.entrySet()) {
+                if (matchesVersion(entry.getKey(), vaadinVersion)) {
+                    return entry.getValue();  // Return even if empty (allows opt-out of defaults)
+                }
+            }
+        }
+
+        // Fall back to default version overrides
+        for (var entry : DEFAULT_VERSION_OVERRIDES.entrySet()) {
+            if (matchesVersion(entry.getKey(), vaadinVersion)) {
+                return entry.getValue();
+            }
+        }
+
+        return null;
     }
 
     public static void main(String... args) {
