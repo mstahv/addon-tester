@@ -364,6 +364,7 @@ public class EcosystemBuild implements Callable<Integer> {
 
                     String originalVersion = detectProjectVaadinVersion(buildPath, task.javaVersion);
                     Path verifyLog = versionOutputPath.resolve(task.name + "-original-build.log");
+                    Files.deleteIfExists(verifyLog);
                     boolean buildsWithOriginal = verifyWithOriginalVersion(buildPath, task.javaVersion,
                             task.useAddonsRepo, task.extraMvnArgs, verifyLog);
 
@@ -446,6 +447,7 @@ public class EcosystemBuild implements Callable<Integer> {
                         Path buildPath = task.buildSubdir != null ? projectPath.resolve(task.buildSubdir) : projectPath;
                         String originalVersion = detectProjectVaadinVersion(buildPath, task.javaVersion);
                         Path verifyLog = versionOutputPath.resolve(task.name + "-original-build.log");
+                        Files.deleteIfExists(verifyLog);
                         boolean buildsWithOriginal = verifyWithOriginalVersion(buildPath, task.javaVersion,
                                 task.useAddonsRepo, task.extraMvnArgs, verifyLog);
                         metadata = new FailureMetadata(task.repoUrl, originalVersion, buildsWithOriginal, task.notifyUsers);
@@ -706,6 +708,9 @@ public class EcosystemBuild implements Callable<Integer> {
         Path logFile = versionOutputPath.resolve("smoke-test-build.log");
 
         try {
+            // Clear previous log file so re-builds start fresh
+            Files.deleteIfExists(logFile);
+
             // Clean up previous smoke test
             if (Files.exists(smokeTestPath)) {
                 deleteDirectory(smokeTestPath);
@@ -787,6 +792,9 @@ public class EcosystemBuild implements Callable<Integer> {
         Path logFile = versionOutputPath.resolve(name + "-build.log");
 
         try {
+            // Clear previous log file so re-builds start fresh
+            Files.deleteIfExists(logFile);
+
             // Clone or update repository
             if (!Files.exists(projectPath)) {
                 if (!silent) System.out.println("  " + DIM + "📥 Cloning " + repoUrl + "..." + RESET);
