@@ -48,6 +48,12 @@ public class EcosystemBuild implements Callable<Integer> {
         new AddonProject() {{
             name = "dramafinder";
             repoUrl = "https://github.com/parttio/dramafinder";
+            notifyUsers = List.of("jcgueriaud1");
+        }},
+        new AddonProject() {{
+            name = "sortable-layout";
+            repoUrl = "https://github.com/jcgueriaud1/sortable-layout";
+            notifyUsers = List.of("jcgueriaud1");
         }},
         new AddonProject() {{
             name = "grid-pagination";
