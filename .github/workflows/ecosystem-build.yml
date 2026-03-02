@@ -10,6 +10,8 @@ on:
     - cron: '0 5 * * *'
     # Run daily at 6:00 UTC against latest stable release
     - cron: '0 6 * * *'
+    # Run daily at 7:00 UTC against latest pre-release version
+    - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
       vaadin_version:
@@ -75,8 +77,15 @@ jobs:
               # 24.9-SNAPSHOT schedule (daily at 5:00 UTC)
               VERSION="$SNAPSHOT_24_9"
               echo "build_type=snapshot" >> $GITHUB_OUTPUT
-            else
+            elif [ "${{ github.event.schedule }}" = "0 6 * * *" ]; then
               # Daily schedule - test latest stable (empty = auto-detect)
+              VERSION=""
+              echo "build_type=release" >> $GITHUB_OUTPUT
+            elif [ "${{ github.event.schedule }}" = "0 7 * * *" ]; then
+              # Daily schedule - test latest pre-release from Maven Central
+              PRE_RELEASE=true
+              echo "build_type=pre-release" >> $GITHUB_OUTPUT
+            else
               VERSION=""
               echo "build_type=release" >> $GITHUB_OUTPUT
             fi
@@ -90,7 +99,10 @@ jobs:
 
           echo "vaadin_version=$VERSION" >> $GITHUB_OUTPUT
 
-          if [ -n "$VERSION" ]; then
+          if [ "$PRE_RELEASE" = "true" ]; then
+            jbang EcosystemBuild.java -q -t 5 -j 2 --pre-release 2>&1 | tee test-output.txt
+            EXIT_CODE=${PIPESTATUS[0]}
+          elif [ -n "$VERSION" ]; then
             jbang EcosystemBuild.java -q -t 5 -j 2 -v "$VERSION" 2>&1 | tee test-output.txt
             EXIT_CODE=${PIPESTATUS[0]}
           else

@@ -125,7 +125,8 @@ public class EcosystemBuild implements Callable<Integer> {
 
     private static final int TAIL_LINES = 10;
 
-    private static final String FALLBACK_VERSION = "25.0.5";
+    private static final String FALLBACK_VERSION = "25.0.6";
+    private static final Pattern PRE_RELEASE_PATTERN = Pattern.compile(".*-(alpha|beta|rc)\\d*$", Pattern.CASE_INSENSITIVE);
 
     @Option(names = {"--vaadin.version", "-v"}, description = "Vaadin version to test against (default: latest from Maven Central)")
     private String vaadinVersion;
@@ -148,7 +149,11 @@ public class EcosystemBuild implements Callable<Integer> {
     @Option(names = {"--buildThreads", "-j"}, description = "Number of concurrent builds (default: 1)", defaultValue = "1")
     private int buildThreads;
 
+    @Option(names = {"--pre-release"}, description = "Auto-detect and test the latest pre-release version from Maven Central")
+    private boolean preRelease;
+
     private boolean useCustomSettings = false;
+    private String cachedMavenMetadataXml;
     private Path versionOutputPath;  // Version-specific output directory for logs and reports
 
     // Project types
@@ -222,16 +227,28 @@ public class EcosystemBuild implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         // Resolve Vaadin version if not specified
-        if (vaadinVersion == null || vaadinVersion.isBlank()) {
-            System.out.println("🔍 Fetching latest Vaadin version from Maven Central...");
-            vaadinVersion = fetchLatestVaadinVersion();
-            System.out.println("📦 Using Vaadin version: " + vaadinVersion);
-            System.out.println();
-        } else {
-            // Custom version specified - use pre-release settings for snapshots/betas
+        if (vaadinVersion != null && !vaadinVersion.isBlank()) {
+            // Explicit version specified - use pre-release settings for snapshots/betas
             useCustomSettings = true;
             System.out.println("📦 Using custom Vaadin version: " + vaadinVersion);
             System.out.println("🔓 Pre-release/snapshot repositories enabled via settings.xml");
+            System.out.println();
+        } else if (preRelease) {
+            System.out.println("🔍 Fetching latest pre-release version from Maven Central...");
+            String preReleaseVersion = fetchLatestPreReleaseVersion();
+            if (preReleaseVersion == null) {
+                System.out.println("ℹ️  No pre-release version found from a newer series. Nothing to test.");
+                return 0;
+            }
+            vaadinVersion = preReleaseVersion;
+            useCustomSettings = true;
+            System.out.println("📦 Using pre-release Vaadin version: " + vaadinVersion);
+            System.out.println("🔓 Pre-release repositories enabled via settings.xml");
+            System.out.println();
+        } else {
+            System.out.println("🔍 Fetching latest Vaadin version from Maven Central...");
+            vaadinVersion = fetchLatestVaadinVersion();
+            System.out.println("📦 Using Vaadin version: " + vaadinVersion);
             System.out.println();
         }
 
@@ -1230,7 +1247,8 @@ public class EcosystemBuild implements Callable<Integer> {
         return args;
     }
 
-    private String fetchLatestVaadinVersion() {
+    private String fetchMavenMetadataXml() {
+        if (cachedMavenMetadataXml != null) return cachedMavenMetadataXml;
         try {
             HttpClient client = HttpClient.newBuilder()
                     .followRedirects(HttpClient.Redirect.NORMAL)
@@ -1240,13 +1258,40 @@ public class EcosystemBuild implements Callable<Integer> {
                     .timeout(java.time.Duration.ofSeconds(10))
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
             if (response.statusCode() == 200) {
-                // Parse <release> tag from maven-metadata.xml
-                Pattern pattern = Pattern.compile("<release>([^<]+)</release>");
-                Matcher matcher = pattern.matcher(response.body());
-                if (matcher.find()) {
-                    return matcher.group(1);
+                cachedMavenMetadataXml = response.body();
+                return cachedMavenMetadataXml;
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️  Warning: Could not fetch Maven metadata: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private List<String> parseVersionsList(String xml) {
+        List<String> versions = new ArrayList<>();
+        Matcher matcher = Pattern.compile("<version>([^<]+)</version>").matcher(xml);
+        while (matcher.find()) {
+            versions.add(matcher.group(1));
+        }
+        return versions;
+    }
+
+    private String fetchLatestVaadinVersion() {
+        try {
+            String xml = fetchMavenMetadataXml();
+            if (xml != null) {
+                List<String> versions = parseVersionsList(xml);
+                // Filter to stable versions only: digits.digits.digits with no suffix
+                Pattern stablePattern = Pattern.compile("^\\d+\\.\\d+\\.\\d+$");
+                String latest = null;
+                for (String v : versions) {
+                    if (stablePattern.matcher(v).matches()) {
+                        latest = v;
+                    }
+                }
+                if (latest != null) {
+                    return latest;
                 }
             }
         } catch (Exception e) {
@@ -1254,6 +1299,37 @@ public class EcosystemBuild implements Callable<Integer> {
         }
         System.err.println("📦 Using fallback version: " + FALLBACK_VERSION);
         return FALLBACK_VERSION;
+    }
+
+    /**
+     * Find the latest pre-release version from a newer minor series than the latest stable.
+     * For example, if stable is 25.0.6, this looks for versions like 25.1.0-beta1.
+     * Returns null if no qualifying pre-release version is found.
+     */
+    private String fetchLatestPreReleaseVersion() {
+        try {
+            String xml = fetchMavenMetadataXml();
+            if (xml == null) return null;
+
+            List<String> versions = parseVersionsList(xml);
+            String latestStable = fetchLatestVaadinVersion();
+            int[] stableMajorMinor = extractMajorMinor(latestStable);
+
+            String latest = null;
+            for (String v : versions) {
+                if (!PRE_RELEASE_PATTERN.matcher(v).matches()) continue;
+                int[] mm = extractMajorMinor(v);
+                // Only consider pre-releases from a newer minor series
+                if (mm[0] > stableMajorMinor[0]
+                        || (mm[0] == stableMajorMinor[0] && mm[1] > stableMajorMinor[1])) {
+                    latest = v;
+                }
+            }
+            return latest;
+        } catch (Exception e) {
+            System.err.println("⚠️  Warning: Could not fetch pre-release version: " + e.getMessage());
+            return null;
+        }
     }
 
     /**
