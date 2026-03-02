@@ -53,6 +53,7 @@ public class EcosystemBuild implements Callable<Integer> {
             repoUrl = "https://github.com/parttio/dramafinder";
             notifyUsers = List.of("jcgueriaud1");
             timeoutMinutes = 10;
+            gitClean = true;
         }},
         new AddonProject() {{
             name = "sortable-layout";
@@ -171,6 +172,7 @@ public class EcosystemBuild implements Callable<Integer> {
         String javaVersion;      // SDKMAN Java version (e.g., "21-tem")
         boolean useAddonsRepo;   // Enable Vaadin Directory repository
         int timeoutMinutes;      // Per-project timeout (0 = use global default)
+        boolean gitClean;        // Run git clean -fdx before build to remove all untracked files
         List<String> extraMvnArgs = List.of();
         List<String> notifyUsers = List.of();  // GitHub usernames to mention in issues
         boolean ignored;
@@ -187,6 +189,7 @@ public class EcosystemBuild implements Callable<Integer> {
         String javaVersion;
         boolean useAddonsRepo;
         int timeoutMinutes;      // Per-project timeout (0 = use global default)
+        boolean gitClean;        // Run git clean -fdx before build to remove all untracked files
         List<String> extraMvnArgs = List.of();
         List<String> notifyUsers = List.of();  // GitHub usernames to mention in issues
         boolean ignored;
@@ -315,7 +318,7 @@ public class EcosystemBuild implements Callable<Integer> {
         record BuildTask(String name, String repoUrl, String branch, String buildSubdir,
                          String javaVersion, boolean useAddonsRepo, List<String> extraMvnArgs,
                          List<String> notifyUsers, ProjectType type, boolean ignored, String ignoreReason,
-                         int timeoutMinutes) {}
+                         int timeoutMinutes, boolean gitClean) {}
 
         List<BuildTask> allTasks = new ArrayList<>();
         for (AddonProject addon : addonsToTest) {
@@ -329,7 +332,7 @@ public class EcosystemBuild implements Callable<Integer> {
 
             allTasks.add(new BuildTask(addon.name, addon.repoUrl, branch, addon.buildSubdir,
                     javaVersion, addon.useAddonsRepo, extraMvnArgs, addon.notifyUsers,
-                    ProjectType.ADDON, ignored, ignoreReason, addon.timeoutMinutes));
+                    ProjectType.ADDON, ignored, ignoreReason, addon.timeoutMinutes, addon.gitClean));
         }
         for (AppProject app : appsToTest) {
             // Apply version-specific overrides if any
@@ -342,7 +345,7 @@ public class EcosystemBuild implements Callable<Integer> {
 
             allTasks.add(new BuildTask(app.name, app.repoUrl, branch, app.buildSubdir,
                     javaVersion, app.useAddonsRepo, extraMvnArgs, app.notifyUsers,
-                    ProjectType.APP, ignored, ignoreReason, app.timeoutMinutes));
+                    ProjectType.APP, ignored, ignoreReason, app.timeoutMinutes, app.gitClean));
         }
 
         if (buildThreads == 1) {
@@ -362,7 +365,7 @@ public class EcosystemBuild implements Callable<Integer> {
 
                 TestResult result = testProject(task.name, task.repoUrl, task.branch, task.buildSubdir,
                         task.javaVersion, task.useAddonsRepo, task.extraMvnArgs, task.type, workPath,
-                        false, task.timeoutMinutes);
+                        false, task.timeoutMinutes, task.gitClean);
                 results.add(result);
 
                 durationMap.put(task.name, result.durationMs());
@@ -460,7 +463,7 @@ public class EcosystemBuild implements Callable<Integer> {
 
                     TestResult result = testProject(task.name, task.repoUrl, task.branch, task.buildSubdir,
                             task.javaVersion, task.useAddonsRepo, task.extraMvnArgs, task.type, finalWorkPath,
-                            true, task.timeoutMinutes);
+                            true, task.timeoutMinutes, task.gitClean);
 
                     // For failures, verify if project builds with its original Vaadin version
                     FailureMetadata metadata = null;
@@ -801,7 +804,8 @@ public class EcosystemBuild implements Callable<Integer> {
 
     private TestResult testProject(String name, String repoUrl, String branch, String buildSubdir,
                                     String javaVersion, boolean useAddonsRepo, List<String> extraMvnArgs,
-                                    ProjectType type, Path workPath, boolean silent, int projectTimeoutMinutes) {
+                                    ProjectType type, Path workPath, boolean silent, int projectTimeoutMinutes,
+                                    boolean gitClean) {
         int effectiveTimeout = projectTimeoutMinutes > 0 ? projectTimeoutMinutes : timeoutMinutes;
         long startTime = System.currentTimeMillis();
         Path projectPath = workPath.resolve(name);
@@ -849,6 +853,11 @@ public class EcosystemBuild implements Callable<Integer> {
                 } else {
                     runCommandSilent(projectPath, logFile, "git", "reset", "--hard", "origin/" + targetBranch);
                 }
+            }
+
+            // Remove all untracked files if configured (ensures clean state across version changes)
+            if (gitClean) {
+                runCommandSilent(projectPath, logFile, "git", "clean", "-fdx");
             }
 
             // Build with specified Vaadin version
