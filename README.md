@@ -186,3 +186,14 @@ If a project fails but has an open GitHub issue that mentions both the project n
 7. Saves full build logs to `work/<project-name>-build.log`
 8. Reports success/failure status with colored output and timing information
 9. Returns exit code 0 if all tests pass, 1 otherwise
+
+## Investigation Reports
+
+When build failures occur, investigation reports document the root causes and provide migration guidance:
+
+- **[Investigation Reports](.)** - Root cause analysis for version-specific failures (e.g., `INVESTIGATION_25.1-SNAPSHOT.md`)
+- **[Issue Comment Templates](ISSUE_COMMENTS_TEMPLATE.md)** - Ready-to-use templates for GitHub issue updates
+- **[Investigation Guide](docs/INVESTIGATION_GUIDE.md)** - Process for creating future investigation reports
+- **[Action Checklist](ACTION_CHECKLIST.md)** - Step-by-step guide for updating GitHub issues
+
+These reports help project maintainers understand breaking changes and migrate their code when Vaadin releases introduce incompatibilities.
